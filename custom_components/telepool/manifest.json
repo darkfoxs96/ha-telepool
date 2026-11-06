@@ -8,5 +8,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/darkfoxs96/ha-telepool/issues",
   "requirements": ["beautifulsoup4>=4.14.3"],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
