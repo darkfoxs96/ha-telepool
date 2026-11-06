@@ -41,6 +41,8 @@ Adding the repository by link does not require inclusion in the default catalog.
 3. Select your Q3 from the stations found in that account.
 4. Open the station's device page to view its readings and controls, or add them to a dashboard.
 
+Your TelePool username and password are encrypted before being saved in Home Assistant. They remain stored in encrypted form across restarts, so you do not need to enter them again each time Home Assistant starts. The integration uses the saved credentials to sign in automatically. See [Updates and backups](#updates-and-backups) for encryption key storage and migration.
+
 Add a separate TelePool integration entry for each station. No Home Assistant cloud subscription is required. If your TelePool credentials stop working, Home Assistant will ask you to authenticate again.
 
 New entries use **Q3 thermostat** and **Q3 FU menu control** by default. Selecting a mode exposes the control; it does not send a command by itself. You can disable either control and keep reading the station.
