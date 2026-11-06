@@ -17,7 +17,7 @@ from homeassistant.const import ATTR_ENTITY_ID, ATTR_TEMPERATURE, PRECISION_TENT
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util.unit_conversion import TemperatureDeltaConverter
 
-from .const import POOL_MAX_TEMP_CELSIUS
+from .const import get_max_target_temperature
 from .entity import TelePoolEntity
 
 
@@ -67,7 +67,7 @@ class TelePoolNativeClimate(TelePoolEntity, ClimateEntity):
             and maximum is not None
             and step is not None
             and step > 0
-            and minimum <= min(maximum, POOL_MAX_TEMP_CELSIUS)
+            and minimum <= min(maximum, self.max_temp)
         )
 
     @property
@@ -100,7 +100,7 @@ class TelePoolNativeClimate(TelePoolEntity, ClimateEntity):
     @property
     def native_target_temperature(self) -> float | None:
         pending = _finite(self.coordinator.native_pending_target)
-        if self.coordinator.native_held and pending is not None:
+        if self.coordinator.native_held and self.coordinator.native_pending_target_queued and pending is not None:
             return pending
         return self._control_number("target_temperature")
 
@@ -112,8 +112,9 @@ class TelePoolNativeClimate(TelePoolEntity, ClimateEntity):
 
     @property
     def max_temp(self) -> float:
-        maximum = self._control_number("max_temperature")
-        return min(maximum, POOL_MAX_TEMP_CELSIUS) if maximum is not None else POOL_MAX_TEMP_CELSIUS
+        # The user may raise this display/command ceiling above today's cloud
+        # form maximum. TelePool's response decides whether that target is valid.
+        return get_max_target_temperature(self.coordinator.entry.options)
 
     @property
     def target_temperature_step(self) -> float | None:

@@ -18,7 +18,8 @@ from custom_components.telepool.client import (
 from custom_components.telepool.client import (
     ConnectionError as TelePoolConnectionError,
 )
-from custom_components.telepool.config_flow import DEFAULT_OPTIONS
+from custom_components.telepool.config_flow import DEFAULT_OPTIONS, TelePoolOptionsFlow
+from custom_components.telepool.const import CONF_MAX_TARGET_TEMPERATURE
 from custom_components.telepool.credential_store import (
     async_decrypt_credentials,
     async_encrypt_credentials,
@@ -77,6 +78,7 @@ async def test_setup_selects_station_and_stores_only_ciphertext(hass, discover):
     saved_options = dict(entry.options)
     assert UUID(saved_options.pop("native_cache_generation")).version == 4
     assert saved_options == DEFAULT_OPTIONS
+    assert entry.options[CONF_MAX_TARGET_TEMPERATURE] == 35
 
 
 async def test_readding_station_does_not_reuse_native_pending_namespace(hass, discover):
@@ -514,3 +516,66 @@ async def test_options_enforce_interval_bounds(hass, field, value):
         )
     assert field in err.value.schema_errors
     assert not entry.options
+
+
+@pytest.mark.parametrize("maximum", [5, 35, 38, 39.5, 40])
+async def test_options_save_temperature_limit_without_rotating_pending_namespace(hass, maximum):
+    """A user cap survives the flow without invalidating destination-bound pending state."""
+    generation = "a" * 32
+    entry = MockConfigEntry(
+        domain="telepool",
+        unique_id=STATION.id,
+        options=DEFAULT_OPTIONS | {"native_cache_generation": generation},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    limit_selector = next(
+        value for key, value in result["data_schema"].schema.items() if str(key) == CONF_MAX_TARGET_TEMPERATURE
+    )
+    assert limit_selector.config == {
+        "min": 5,
+        "max": 40,
+        "step": 0.5,
+        "mode": "box",
+        "unit_of_measurement": "°C",
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=DEFAULT_OPTIONS | {CONF_MAX_TARGET_TEMPERATURE: maximum}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_MAX_TARGET_TEMPERATURE] == maximum
+    assert entry.options["native_cache_generation"] == generation
+
+
+@pytest.mark.parametrize("saved_maximum", [None, 38.5])
+async def test_options_missing_temperature_limit_uses_saved_value_or_default(hass, saved_maximum):
+    """Older clients and entries can submit options without resetting a chosen cap."""
+    saved = dict(DEFAULT_OPTIONS)
+    saved.pop(CONF_MAX_TARGET_TEMPERATURE)
+    if saved_maximum is not None:
+        saved[CONF_MAX_TARGET_TEMPERATURE] = saved_maximum
+    entry = MockConfigEntry(domain="telepool", unique_id=STATION.id, options=saved)
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    expected = 35 if saved_maximum is None else saved_maximum
+    assert result["data_schema"]({})[CONF_MAX_TARGET_TEMPERATURE] == expected
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={key: value for key, value in DEFAULT_OPTIONS.items() if key != CONF_MAX_TARGET_TEMPERATURE},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_MAX_TARGET_TEMPERATURE] == expected
+
+
+@pytest.mark.parametrize("maximum", [4.5, 40.5, 38.25, float("nan"), float("inf"), True, "38", None, {}])
+async def test_options_reject_invalid_temperature_limits_even_without_selector_validation(hass, maximum):
+    """The flow itself enforces finite numeric half-degree limits, not just its UI selector."""
+    entry = MockConfigEntry(domain="telepool", unique_id=STATION.id, options=DEFAULT_OPTIONS)
+    entry.add_to_hass(hass)
+    flow = TelePoolOptionsFlow()
+    flow.hass = hass
+    flow.handler = entry.entry_id
+    result = await flow.async_step_init(DEFAULT_OPTIONS | {CONF_MAX_TARGET_TEMPERATURE: maximum})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_MAX_TARGET_TEMPERATURE: "invalid_temperature_limit"}
+    assert dict(entry.options) == DEFAULT_OPTIONS

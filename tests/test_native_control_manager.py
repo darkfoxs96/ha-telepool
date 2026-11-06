@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import urlsplit
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -20,10 +21,15 @@ from custom_components.telepool.client import (
     SettingsRejected,
     Snapshot,
     Station,
+    TelePoolClient,
+    TemperatureRangeRejected,
     WriteOutcomeUnknown,
 )
 from custom_components.telepool.coordinator import TelePoolCoordinator
 from custom_components.telepool.native_control import NativeControlManager
+from tests.test_client import Response, Session
+from tests.test_native_client import PATH, form_html, range_form
+from tests.test_native_client import STATION as TRANSPORT_STATION
 
 STATION = Station("test-station", "test-pool", "Pool", "Q3", 7)
 CONTROLS = Q3Controls(STATION.id, 28.0, True, 5.0, 35.0, 0.5, True, True)
@@ -67,7 +73,30 @@ async def test_paused_temperature_is_durable_latest_only_without_device_write(ha
     assert subject.pending_target == 30.0
     assert subject._store.async_save.call_args.args[0]["pending"] == 30.0
     assert subject._store.async_save.call_args.args[0]["delivery"] == "queued"
+    assert subject.pending_target_queued
     owner.client.async_set_temperature.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("delivery", "error"),
+    [("queued", None), ("sending", None), ("unknown", "write_outcome_unknown"), ("blocked", "write_failed")],
+)
+async def test_restored_pending_display_flag_distinguishes_offline_intention_from_unconfirmed_commands(
+    hass, delivery, error
+):
+    subject, _ = manager(hass, paused=True)
+    subject.controls = replace(CONTROLS, target_temperature=35)
+    await subject._save(38, delivery, error)
+    restored, restored_owner = manager(hass, paused=True)
+    restored._store.async_load.return_value = subject._store.async_save.await_args.args[0]
+
+    await restored.initialize()
+
+    assert restored.held
+    assert restored.controls.target_temperature == 35
+    assert restored.pending_target == 38
+    assert restored.pending_target_queued is (delivery == "queued")
+    restored_owner.client.async_set_temperature.assert_not_awaited()
 
 
 async def test_failed_durable_queue_does_not_acknowledge_or_dispatch(hass):
@@ -260,16 +289,394 @@ async def test_native_target_obeys_lower_form_limit_step_and_finite_values(hass,
     subject._store.async_save.assert_not_awaited()
 
 
-async def test_changed_live_range_blocks_old_pending_target(hass):
+async def test_changed_live_range_is_sent_then_uses_one_confirmed_fallback(hass):
     subject, owner = manager(hass, paused=True)
     await subject.set_temperature(30.0)
     owner.policy.power = "on"
     owner.availability = Availability("working", True, True)
     owner.client.async_get_controls.return_value = replace(CONTROLS, max_temperature=29.0)
+    owner.client.async_set_temperature.side_effect = [
+        TemperatureRangeRejected(5.0, 29.0, 0.5),
+        replace(CONTROLS, target_temperature=29.0, max_temperature=29.0),
+    ]
     await subject.refresh()
-    assert subject.pending_target == 30.0
-    assert subject.pending_error == "target_out_of_range"
+    assert subject.pending_target is None and subject.pending_error is None
+    assert subject.controls.target_temperature == 29
+    assert [call.args[1] for call in owner.client.async_set_temperature.await_args_list] == [30, 29]
+    assert type(owner.client.async_set_temperature.await_args.kwargs["range_rejection"]) is TemperatureRangeRejected
+
+
+async def test_raised_limit_sends_initial_request_above_cached_cloud_maximum(hass):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    owner.client.async_set_temperature.return_value = replace(CONTROLS, target_temperature=38)
+    await subject.set_temperature(38)
+    assert_guarded_call(owner.client.async_set_temperature, 38)
+    assert subject.controls.target_temperature == 38
+    assert subject.pending_target is None
+
+
+async def test_lowering_configured_limit_during_client_preflight_prevents_outdated_target_post(hass):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    physical_posts = []
+
+    async def lower_limit_before_post(_station, target, *, dispatch_guard):
+        assert target == 38
+        owner.entry.options["max_target_temperature"] = 35
+        assert not dispatch_guard()
+        if not dispatch_guard():
+            raise CommandNotSent("Configured limit changed before POST")
+        physical_posts.append(target)
+
+    owner.client.async_set_temperature.side_effect = lower_limit_before_post
+    with pytest.raises(HomeAssistantError, match="no command was sent"):
+        await subject.set_temperature(38)
+    assert physical_posts == []
+    owner.client.async_set_temperature.assert_awaited_once()
+    assert subject.controls.target_temperature == 28
+    assert subject.pending_target == 38 and subject._delivery == "blocked"
+    assert subject.pending_error == "write_failed"
+    await subject.refresh()
+    await subject.refresh()
+    owner.client.async_set_temperature.assert_awaited_once()
+
+
+@pytest.mark.parametrize("server_maximum", [35, 36, 37])
+async def test_confirmed_server_range_rejection_sets_its_maximum_once_and_reports_actual_target(hass, server_maximum):
+    """An unchanged old 28 °C target cannot be mistaken for applying the permitted maximum."""
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    assert subject.controls.target_temperature == 28
+    confirmed = replace(CONTROLS, target_temperature=server_maximum, max_temperature=server_maximum)
+    rejection = TemperatureRangeRejected(5.0, float(server_maximum), 0.5)
+    owner.client.async_set_temperature.side_effect = [rejection, confirmed]
+
+    with pytest.raises(ServiceValidationError) as reported:
+        await subject.set_temperature(38)
+
+    assert reported.value.translation_key == "q3_temperature_limited"
+    assert reported.value.translation_placeholders == {
+        "min": "5",
+        "max": str(server_maximum),
+        "target": str(server_maximum),
+    }
+    calls = owner.client.async_set_temperature.await_args_list
+    assert [call.args for call in calls] == [(STATION, 38), (STATION, server_maximum)]
+    assert set(calls[0].kwargs) == {"dispatch_guard"}
+    assert set(calls[1].kwargs) == {"dispatch_guard", "range_rejection"}
+    assert calls[1].kwargs["range_rejection"] is rejection
+    assert all(call.kwargs["dispatch_guard"]() for call in calls)
+    assert subject.controls == confirmed
+    assert subject.pending_target is None and subject.pending_error is None
+    saved = subject._store.async_save.await_args.args[0]
+    assert saved["controls"]["target_temperature"] == server_maximum
+    assert saved["pending"] is None and saved["delivery"] is None
+    owner.client.async_get_controls.return_value = confirmed
+    await subject.refresh()
+    await subject.refresh()
+    assert owner.client.async_set_temperature.await_count == 2
+
+
+async def test_real_native_manager_and_client_correct_once_using_server_range_despite_stale_fresh_get_form(hass):
+    """Both settings POSTs and the final readback are synthetic HTTP transport requests."""
+    _, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    owner.station = TRANSPORT_STATION
+    owner.snapshot = replace(owner.snapshot, station_id=TRANSPORT_STATION.id)
+    session = Session()
+    session.login()
+    # The next GET still serves yesterday's 35 °C / 0.5 grid. The rejected
+    # submission is authoritative for its 36 °C / 0.7 grid instead.
+    session.add(
+        "GET",
+        PATH,
+        Response(form_html(target="28")),
+        Response(form_html(target="28")),
+        Response(range_form(target="35.8", maximum="36", step="0.7")),
+    )
+    session.add(
+        "POST",
+        PATH,
+        Response(
+            range_form(target="38", maximum="36", step="0.7", errors=("SetPointTemp",)).replace(
+                "private provider detail", "The field SetPointTemp must be between 5 and 36."
+            )
+        ),
+        Response(status=302, headers={"Location": "/"}),
+    )
+    owner.client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+    subject = NativeControlManager(owner)
+    subject.controls = replace(CONTROLS, station_id=TRANSPORT_STATION.id)
+    subject._read_ok = True
+    subject._store = SimpleNamespace(async_load=AsyncMock(return_value=None), async_save=AsyncMock())
+
+    with pytest.raises(ServiceValidationError) as reported:
+        await subject.set_temperature(38)
+
+    assert reported.value.translation_key == "q3_temperature_limited"
+    assert reported.value.translation_placeholders == {"min": "5", "max": "36", "target": "35.8"}
+    posts = [kwargs["data"] for method, url, kwargs in session.calls if method == "POST" and urlsplit(url).path == PATH]
+    assert len(posts) == 2
+    assert [dict(pairs)["SetPointTemp"] for pairs in posts] == ["38.0", "35.8"]
+    assert [(name, value) for name, value in posts[0] if name != "SetPointTemp"] == [
+        (name, value) for name, value in posts[1] if name != "SetPointTemp"
+    ]
+    assert subject.controls.target_temperature == pytest.approx(35.8)
+    assert subject.controls.max_temperature == 36 and subject.controls.temperature_step == 0.7
+    assert subject.pending_target is None and subject.pending_error is None
+    record = subject._store.async_save.await_args.args[0]
+    assert record["controls"]["target_temperature"] == pytest.approx(35.8)
+    assert record["pending"] is None and record["delivery"] is None
+
+
+async def test_raised_target_stays_queued_during_pause_then_receives_server_fallback_after_reconnection(hass):
+    subject, owner = manager(hass, paused=True)
+    owner.entry.options["max_target_temperature"] = 38
+    await subject.set_temperature(38)
+    assert subject.pending_target == 38 and subject._delivery == "queued"
     owner.client.async_set_temperature.assert_not_awaited()
+    owner.policy.power = "on"
+    owner.availability = Availability("working", True, True)
+    owner.client.async_set_temperature.side_effect = [
+        TemperatureRangeRejected(5.0, 35.0, 0.5),
+        replace(CONTROLS, target_temperature=35.0),
+    ]
+
+    await subject.refresh()
+
+    assert [call.args[1] for call in owner.client.async_set_temperature.await_args_list] == [38, 35]
+    assert subject.controls.target_temperature == 35
+    assert subject.pending_target is None and subject.pending_error is None
+
+
+@pytest.mark.parametrize(("new_user_cap", "fallback"), [(38, 35), (34.5, 33)])
+async def test_fallback_rechecks_configured_cap_and_aligns_down_to_rejected_form_step(hass, new_user_cap, fallback):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+
+    async def reject_then_confirm(_station, target, *, dispatch_guard, range_rejection=None):
+        assert dispatch_guard()
+        if range_rejection is None:
+            assert target == 38
+            owner.entry.options["max_target_temperature"] = new_user_cap
+            raise TemperatureRangeRejected(5.0, 36.0, 2.0)
+        assert target == fallback
+        return replace(CONTROLS, target_temperature=target, max_temperature=36.0, temperature_step=2.0)
+
+    owner.client.async_set_temperature.side_effect = reject_then_confirm
+    with pytest.raises(ServiceValidationError) as reported:
+        await subject.set_temperature(38)
+    assert reported.value.translation_key == "q3_temperature_limited"
+    assert reported.value.translation_placeholders["target"] == str(fallback)
+    assert [call.args[1] for call in owner.client.async_set_temperature.await_args_list] == [38, fallback]
+    assert subject.controls.target_temperature == fallback <= new_user_cap
+    assert subject.pending_target is None
+
+
+async def test_fallback_uses_rejected_form_grid_instead_of_stale_cached_step(hass):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    assert subject.controls.temperature_step == 0.5
+
+    async def reject_then_confirm(_station, target, *, dispatch_guard, range_rejection=None):
+        assert dispatch_guard()
+        if range_rejection is None:
+            assert target == 38
+            raise TemperatureRangeRejected(5.0, 36.0, 0.7)
+        assert target == pytest.approx(35.8)
+        assert subject.controls.target_temperature == 28
+        return replace(CONTROLS, target_temperature=target, max_temperature=36.0, temperature_step=0.7)
+
+    owner.client.async_set_temperature.side_effect = reject_then_confirm
+    with pytest.raises(ServiceValidationError) as reported:
+        await subject.set_temperature(38)
+    assert reported.value.translation_key == "q3_temperature_limited"
+    assert reported.value.translation_placeholders["target"] == "35.8"
+    assert owner.client.async_set_temperature.await_count == 2
+    assert subject.controls.target_temperature == pytest.approx(35.8)
+    assert subject.pending_target is None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"minimum": float("nan")},
+        {"minimum": True},
+        {"maximum": float("inf")},
+        {"maximum": "35"},
+        {"maximum": 4.0},
+        {"step": 0.0},
+        {"step": None},
+    ],
+)
+async def test_untrusted_range_error_data_never_triggers_fallback(hass, changes):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    error = TemperatureRangeRejected(5.0, 35.0, 0.5)
+    for name, value in changes.items():
+        setattr(error, name, value)
+    owner.client.async_set_temperature.side_effect = error
+    with pytest.raises(HomeAssistantError):
+        await subject.set_temperature(38)
+    owner.client.async_set_temperature.assert_awaited_once()
+    assert subject.controls.target_temperature == 28
+    assert subject._delivery == "blocked" and subject.pending_error == "write_failed"
+    await subject.refresh()
+    owner.client.async_set_temperature.assert_awaited_once()
+
+
+async def test_future_range_exception_subclass_is_not_authorized_to_trigger_fallback(hass):
+    class FutureRangeRejection(TemperatureRangeRejected):
+        pass
+
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    owner.client.async_set_temperature.side_effect = FutureRangeRejection(5.0, 35.0, 0.5)
+    with pytest.raises(HomeAssistantError):
+        await subject.set_temperature(38)
+    owner.client.async_set_temperature.assert_awaited_once()
+    assert subject.controls.target_temperature == 28
+    assert subject._delivery == "blocked"
+
+
+async def test_range_rejection_for_target_already_within_reported_range_is_not_retried(hass):
+    subject, owner = manager(hass)
+    owner.client.async_set_temperature.side_effect = TemperatureRangeRejected(5.0, 35.0, 0.5)
+    with pytest.raises(HomeAssistantError):
+        await subject.set_temperature(34)
+    owner.client.async_set_temperature.assert_awaited_once()
+    assert subject.controls.target_temperature == 28
+
+
+@pytest.mark.parametrize(
+    ("fallback_error", "delivery", "pending_error"),
+    [
+        (WriteOutcomeUnknown("response lost"), "unknown", "write_outcome_unknown"),
+        (SettingsRejected("validation_error"), "blocked", "write_failed"),
+        (TemperatureRangeRejected(5.0, 34.0, 0.5), "blocked", "write_failed"),
+    ],
+)
+async def test_failed_fallback_is_attempted_once_and_tracks_its_own_uncertain_or_blocked_target(
+    hass, fallback_error, delivery, pending_error
+):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    owner.client.async_set_temperature.side_effect = [TemperatureRangeRejected(5.0, 35.0, 0.5), fallback_error]
+    with pytest.raises(HomeAssistantError):
+        await subject.set_temperature(38)
+    assert [call.args[1] for call in owner.client.async_set_temperature.await_args_list] == [38, 35]
+    assert subject.pending_target == 35
+    assert subject._delivery == delivery and subject.pending_error == pending_error
+    assert subject.controls.target_temperature == 28
+    await subject.refresh()
+    await subject.refresh()
+    assert owner.client.async_set_temperature.await_count == 2
+
+
+async def test_fallback_transport_guard_refusal_blocks_instead_of_queueing_for_later_replay(hass):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+
+    async def reject_then_lose_power(_station, target, *, dispatch_guard, range_rejection=None):
+        if range_rejection is None:
+            assert target == 38 and dispatch_guard()
+            raise TemperatureRangeRejected(5.0, 35.0, 0.5)
+        assert target == 35
+        owner.policy.power = "off"
+        owner.availability = Availability("paused", False, True)
+        assert not dispatch_guard()
+        raise CommandNotSent("Guard denied before fallback POST")
+
+    owner.client.async_set_temperature.side_effect = reject_then_lose_power
+    with pytest.raises(HomeAssistantError, match="no command was sent"):
+        await subject.set_temperature(38)
+    assert [call.args[1] for call in owner.client.async_set_temperature.await_args_list] == [38, 35]
+    assert subject.pending_target == 35 and subject._delivery == "blocked"
+    assert subject.pending_error == "write_failed"
+    assert subject.controls.target_temperature == 28
+    owner.policy.power = "on"
+    owner.availability = Availability("working", True, True)
+    await subject.refresh()
+    await subject.refresh()
+    assert owner.client.async_set_temperature.await_count == 2
+
+
+async def test_crash_during_fallback_restores_fallback_as_unknown_and_never_replays(hass):
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    entered = asyncio.Event()
+
+    async def reject_then_wait(_station, target, *, dispatch_guard, range_rejection=None):
+        assert dispatch_guard()
+        if range_rejection is None:
+            raise TemperatureRangeRejected(5.0, 35.0, 0.5)
+        assert target == 35
+        entered.set()
+        await asyncio.Future()
+
+    owner.client.async_set_temperature.side_effect = reject_then_wait
+    command = asyncio.create_task(subject.set_temperature(38))
+    await entered.wait()
+    saved = subject._store.async_save.await_args.args[0]
+    assert saved["pending"] == 35 and saved["delivery"] == "sending"
+    subject.close()
+    with pytest.raises(asyncio.CancelledError):
+        await command
+    restored, restored_owner = manager(hass)
+    restored._store.async_load.return_value = saved
+    await restored.initialize()
+    await restored.refresh()
+    assert restored.pending_target == 35
+    assert restored.pending_error == "write_outcome_unknown"
+    restored_owner.client.async_set_temperature.assert_not_awaited()
+
+
+async def test_crash_at_first_fallback_save_before_preflight_never_restores_a_replayable_queue(hass):
+    """Persisting the replacement is already a no-replay boundary, before its transport call."""
+    subject, owner = manager(hass)
+    owner.entry.options["max_target_temperature"] = 38
+    owner.client.async_set_temperature.side_effect = TemperatureRangeRejected(5.0, 35.0, 0.5)
+    durable_fallback = None
+
+    async def persist_then_crash(record):
+        nonlocal durable_fallback
+        if record["pending"] == 35:
+            durable_fallback = record
+            raise asyncio.CancelledError
+
+    subject._store.async_save.side_effect = persist_then_crash
+    with pytest.raises(asyncio.CancelledError):
+        await subject.set_temperature(38)
+
+    assert_guarded_call(owner.client.async_set_temperature, 38)
+    assert durable_fallback is not None
+    assert durable_fallback["pending"] == 35 and durable_fallback["delivery"] == "sending"
+    restored, restored_owner = manager(hass)
+    restored._store.async_load.return_value = durable_fallback
+    await restored.initialize()
+    assert restored.pending_target == 35
+    assert restored.pending_error == "write_outcome_unknown"
+    await restored.refresh()
+    await restored.refresh()
+    restored_owner.client.async_set_temperature.assert_not_awaited()
+
+
+async def test_lowered_limit_blocks_a_restored_native_target_before_delivery(hass):
+    subject, owner = manager(hass, paused=True)
+    owner.entry.options["max_target_temperature"] = 40
+    subject.controls = replace(CONTROLS, max_temperature=40)
+    await subject.set_temperature(38)
+    record = subject._store.async_save.call_args.args[0]
+    restored, restored_owner = manager(hass)
+    restored._store.async_load.return_value = record
+    restored_owner.client.async_get_controls.return_value = replace(CONTROLS, max_temperature=40)
+    await restored.initialize()
+    await restored.refresh()
+    restored_owner.client.async_set_temperature.assert_not_awaited()
+    assert restored.pending_target == 38
+    assert restored.pending_error == "target_out_of_range"
+    assert restored.controls.target_temperature == 28
 
 
 async def test_unknown_power_during_actual_connection_failure_cannot_queue(hass):
@@ -603,6 +1010,7 @@ async def test_actual_coordinator_off_cache_holds_and_skips_all_cloud_control_io
     await subject.async_set_native_temperature(29.0)
 
     assert subject.native_pending_target == 29.0
+    assert subject.native_pending_target_queued
     assert subject._native._store.async_save.call_args.args[0]["delivery"] == "queued"
     client.async_fetch.assert_not_awaited()
     client.async_get_controls.assert_not_awaited()
@@ -634,6 +1042,7 @@ async def test_actual_coordinator_on_watermark_requires_new_q3_point_before_one_
     assert subject.native_available and not subject.native_held
     assert_guarded_call(client.async_set_temperature, 29.0)
     assert subject.native_pending_target is None
+    assert not subject.native_pending_target_queued
     assert subject.native_source_time == newer.observed_at.isoformat()
     client.async_get_controls.return_value = replace(CONTROLS, target_temperature=29.0)
     await subject._async_update_data()

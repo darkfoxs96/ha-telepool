@@ -74,7 +74,7 @@ climate:
     heater: switch.telepool_demo_heater
     target_sensor: sensor.telepool_demo_temperature
     min_temp: 5
-    max_temp: 38
+    max_temp: 40
     target_temp: 28
     initial_hvac_mode: "off"
 

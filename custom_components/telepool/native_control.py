@@ -6,7 +6,8 @@ import asyncio
 import logging
 import math
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -19,12 +20,13 @@ from .client import (
     Q3Controls,
     SettingsRejected,
     TelePoolError,
+    TemperatureRangeRejected,
     WriteOutcomeUnknown,
 )
 from .client import (
     ConnectionError as TelePoolConnectionError,
 )
-from .const import POOL_MAX_TEMP_CELSIUS, get_control_mode
+from .const import DOMAIN, get_control_mode, get_max_target_temperature
 from .storage import StrictStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ _SAFE_ERROR_TYPES = {
     ProtocolError: "ProtocolError",
     SettingsRejected: "SettingsRejected",
     TelePoolError: "TelePoolError",
+    TemperatureRangeRejected: "TemperatureRangeRejected",
     WriteOutcomeUnknown: "WriteOutcomeUnknown",
 }
 _SETTINGS_REJECTION_REASONS = {
@@ -187,7 +190,9 @@ def _safe_client_cause(error: TelePoolError) -> str:
     error_type = type(error)
     label = _SAFE_ERROR_TYPES.get(error_type, "TelePoolError")
     reason = None
-    if error_type is SettingsRejected:
+    if error_type is TemperatureRangeRejected:
+        reason = "TelePool rejected the requested temperature range"
+    elif error_type is SettingsRejected:
         reason = _SETTINGS_REJECTION_REASONS.get(error.reason) if type(error.reason) is str else None
         if reason and error.reason == "validation_error":
             fields = getattr(error, "invalid_fields", ())
@@ -267,6 +272,11 @@ class NativeControlManager:
             and self.owner.availability.display_available
             and self.owner.availability.status in ("paused", "starting")
         )
+
+    @property
+    def pending_target_queued(self) -> bool:
+        """Only an unsent offline intention may replace the held displayed target."""
+        return self.pending_target is not None and self._delivery == "queued"
 
     def close(self) -> None:
         self._closed = True
@@ -358,6 +368,7 @@ class NativeControlManager:
         self.pending_target, self._delivery, self.pending_error = pending, delivery, error
 
     def _validate_target(self, value: Any) -> float:
+        """Enforce the user's ceiling; the server decides its current maximum."""
         controls = self.controls
         if controls is None or not controls.can_set_temperature:
             raise ServiceValidationError("Q3 temperature control is not available in the current form")
@@ -367,10 +378,11 @@ class NativeControlManager:
             raise ServiceValidationError("Q3 temperature bounds or target are invalid")
         minimum, maximum, step = (
             controls.min_temperature,
-            min(controls.max_temperature, POOL_MAX_TEMP_CELSIUS),
+            controls.max_temperature,
             controls.temperature_step,
         )
-        if minimum > maximum or step <= 0 or not minimum <= value <= maximum:
+        limit = get_max_target_temperature(self.owner.entry.options)
+        if minimum > maximum or step <= 0 or not minimum <= value <= limit:
             raise ServiceValidationError("Temperature is outside the supported Q3 range")
         steps = (value - minimum) / step
         if not math.isclose(steps, round(steps), abs_tol=1e-6):
@@ -448,25 +460,100 @@ class NativeControlManager:
             if not self._closed:
                 self.owner.async_update_listeners()
 
-    async def _deliver(self, *, require_power_on: bool = False) -> None:
+    def _range_replacement(self, target: float, error: TemperatureRangeRejected) -> float | None:
+        """Choose one lower target only from a validated server range rejection."""
+        if type(error) is not TemperatureRangeRejected:
+            return None
+        minimum, maximum, step = (getattr(error, key, None) for key in ("minimum", "maximum", "step"))
+        if not all(_number(value) for value in (minimum, maximum, step)):
+            return None
+        if minimum > maximum or step <= 0 or target <= maximum:
+            return None
+        limit = get_max_target_temperature(self.owner.entry.options)
+        upper = min(maximum, limit)
+        low_decimal, step_decimal = Decimal(str(minimum)), Decimal(str(step))
+        steps = ((Decimal(str(upper)) - low_decimal) / step_decimal).to_integral_value(rounding=ROUND_FLOOR)
+        replacement = float(low_decimal + steps * step_decimal)
+        return replacement if minimum <= replacement <= upper and replacement < target else None
+
+    async def _range_recovery(self, target: float, error: TemperatureRangeRejected, *, require_power_on: bool) -> None:
+        """Make at most one distinct bounded replacement, never replay a rejected target."""
+        replacement = self._range_replacement(target, error)
+        if replacement is None:
+            reason = _log_client_failure("temperature command", error)
+            await self._save(target, "blocked", "write_failed")
+            raise HomeAssistantError(f"Q3 did not accept the temperature command ({reason})") from None
+        # The rejection supplies newer capabilities, never a confirmed target.
+        # Keep the reported setpoint while adopting its validated numeric grid.
+        self.controls = replace(
+            self.controls,
+            min_temperature=error.minimum,
+            max_temperature=error.maximum,
+            temperature_step=error.step,
+        )
+        # A restart must not turn this one replacement into a fresh user intent
+        # that could authorize another range correction.
+        await self._save(replacement, "sending", None)
+        await self._deliver(require_power_on=require_power_on, range_rejection=error)
+        if (
+            self._closed
+            or self.pending_target is not None
+            or self.controls is None
+            or self.controls.target_temperature != replacement
+        ):
+            raise HomeAssistantError("The replacement temperature target was not confirmed")
+        # A corrected setting is displayed only after the client's readback
+        # confirms it. The error explains why the original request was changed.
+        _LOGGER.warning(
+            "TelePool temperature range is %g–%g °C; replacement target %g °C was confirmed",
+            error.minimum,
+            error.maximum,
+            replacement,
+        )
+        raise ServiceValidationError(
+            f"TelePool rejected the requested temperature; its range is {error.minimum:g}–{error.maximum:g} °C. "
+            f"The target was set to {replacement:g} °C",
+            translation_domain=DOMAIN,
+            translation_key="q3_temperature_limited",
+            translation_placeholders={
+                "min": f"{error.minimum:g}",
+                "max": f"{error.maximum:g}",
+                "target": f"{replacement:g}",
+            },
+        ) from None
+
+    async def _deliver(
+        self, *, require_power_on: bool = False, range_rejection: TemperatureRangeRejected | None = None
+    ) -> None:
+        allow_range_replacement = range_rejection is None
         if self._closed or self.pending_target is None:
             return
         if not self._can_send_temperature(require_power_on=require_power_on):
-            await self._not_sent(self.pending_target, require_power_on=require_power_on)
+            await self._not_sent(
+                self.pending_target, require_power_on=require_power_on, allow_queue=allow_range_replacement
+            )
             return
         target = self._validate_target(self.pending_target)
         await self._save(target, "sending", None)
         try:
             if not self._can_send_temperature(require_power_on=require_power_on):
-                await self._not_sent(target, require_power_on=require_power_on)
+                await self._not_sent(target, require_power_on=require_power_on, allow_queue=allow_range_replacement)
                 return
+            kwargs = {
+                "dispatch_guard": lambda: (
+                    self._can_send_temperature(require_power_on=require_power_on)
+                    and target <= get_max_target_temperature(self.owner.entry.options)
+                )
+            }
+            if range_rejection is not None:
+                kwargs["range_rejection"] = range_rejection
             self.controls = await self.owner.client.async_set_temperature(
                 self.owner.station,
                 target,
-                dispatch_guard=lambda: self._can_send_temperature(require_power_on=require_power_on),
+                **kwargs,
             )
         except CommandNotSent:
-            await self._not_sent(target, require_power_on=require_power_on)
+            await self._not_sent(target, require_power_on=require_power_on, allow_queue=allow_range_replacement)
             return
         except WriteOutcomeUnknown as error:
             reason = _log_client_failure("temperature command", error)
@@ -475,14 +562,16 @@ class NativeControlManager:
                 f"Q3 command outcome is unknown; it will not be automatically repeated ({reason})"
             ) from None
         except TelePoolError as error:
+            if allow_range_replacement and isinstance(error, TemperatureRangeRejected):
+                await self._range_recovery(target, error, require_power_on=require_power_on)
             reason = _log_client_failure("temperature command", error)
             await self._save(target, "blocked", "write_failed")
             raise HomeAssistantError(f"Q3 did not accept the temperature command ({reason})") from None
         if not self._closed:
             await self._save(None, None, None)
 
-    async def _not_sent(self, target: float, *, require_power_on: bool) -> None:
-        if require_power_on or (self.owner.policy.power == "off" and self.held):
+    async def _not_sent(self, target: float, *, require_power_on: bool, allow_queue: bool = True) -> None:
+        if allow_queue and (require_power_on or (self.owner.policy.power == "off" and self.held)):
             await self._save(target, "queued", None)
             return
         await self._save(target, "blocked", "write_failed")

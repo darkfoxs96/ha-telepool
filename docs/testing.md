@@ -30,7 +30,7 @@ uv run pytest tests/test_homekit_mdns.py
 
 Coverage includes authentication recovery, redirect restrictions, malformed/empty telemetry, station identity, missing probes, credential/key persistence, options and reauthentication, setup/unload, clock-driven polling, cached power pauses, source renames, unit conversion and command limits.
 
-Native-control tests must preserve the distinction between no POST, a confirmed rejection and an unknown outcome. They cover preflight guards, durable sending markers, restart without ambiguous replay, changed form limits, step alignment, safe rejection diagnostics and queue isolation between backends. Successful mocked writes do not establish physical pump or heater behavior.
+Native-control tests must preserve the distinction between no POST, a confirmed rejection and an unknown outcome. They cover preflight guards, durable sending markers, restart without ambiguous replay, changed form limits, step alignment, safe rejection diagnostics and queue isolation between backends. Cover a request above the preflight maximum reaching the server, one correction after a validated temperature-range rejection, dynamic returned maxima, stale fallback-form metadata, and confirmation before updating the displayed target. Exercise the manager with the real client and synthetic transport for the rejection/grid interaction. Authentication/network errors, ambiguous outcomes, other rejected fields, generic target errors and malformed bounds must never trigger a correction; a failed correction must not repeat. A crash at the first replacement cache save must restore a non-replayable state. Successful mocked writes do not establish physical pump or heater behavior.
 
 When updating Home Assistant, review the `StrictStore` private storage hook and the climate native-temperature API. Verify published units, bounds and step through the real HA service path; direct property tests alone do not catch display-unit conversion errors.
 
@@ -53,6 +53,8 @@ The **TelePool Test** developer dashboard at `/telepool-test/pool` uses English 
 - `input_number.telepool_demo_temperature`: manually controlled water temperature.
 
 The Demo dashboard itself needs no TelePool account. To test the integration without cloud credentials, use the automated fixtures. If an account-backed entry is used with the Demo sources, select `external` for both controls before testing their commands; native control modes address Q3 instead.
+
+The Demo thermostat supports targets up to 40 °C. The TelePool proxy defaults to 35 °C; use **Maximum target temperature** in the integration's options to test a different limit, such as 38 °C. Change targets through the proxy to verify its validation. Direct changes to the Demo source bypass that limit, as they do with any external thermostat. For native Q3 tests, keep writes mocked: submit a configured 38 °C target despite an advertised 35 °C maximum, simulate a validated range rejection and one confirmed correction, and cover future responses with different maxima. Real server range-error response formats require a separate explicit live test.
 
 For an external shared-power pause test, select the Demo thermostat and power switch, enable `climate_power_linked`, and change the target through the **TelePool proxy**, not the Demo source. Confirm that OFF retains the last reading and latest pending target, and ON applies the target only after a new source report. The scaffold publishes a Demo thermostat report three seconds after simulated power restoration.
 

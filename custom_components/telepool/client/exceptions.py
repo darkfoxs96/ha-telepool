@@ -1,5 +1,7 @@
 """Public client exceptions; messages never include remote response bodies."""
 
+from math import isfinite
+
 
 class TelePoolError(Exception):
     """Base error for the undocumented TelePool website protocol."""
@@ -50,3 +52,20 @@ class SettingsRejected(ProtocolError):
                 sorted({name for name in invalid_fields if isinstance(name, str) and name in _KNOWN_FORM_FIELDS})
             )[:8]
         super().__init__(self._MESSAGES[reason])
+
+
+class TemperatureRangeRejected(SettingsRejected):
+    """Only the target was rejected, with validated bounds from that response."""
+
+    def __init__(self, minimum: float, maximum: float, step: float) -> None:
+        values = (minimum, maximum, step)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+            raise ValueError("Invalid temperature range rejection metadata")
+        try:
+            numbers = tuple(float(value) for value in values)
+        except OverflowError:
+            raise ValueError("Invalid temperature range rejection metadata") from None
+        if not all(isfinite(value) for value in numbers) or numbers[0] > numbers[1] or numbers[2] <= 0:
+            raise ValueError("Invalid temperature range rejection metadata")
+        self.minimum, self.maximum, self.step = numbers
+        super().__init__("validation_error", invalid_fields=("SetPointTemp",))

@@ -45,12 +45,18 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .climate_cache import ClimateCache
-from .const import DEFAULT_STARTUP_GRACE, DOMAIN, POOL_MAX_TEMP_CELSIUS, get_control_mode
+from .const import (
+    CONF_MAX_TARGET_TEMPERATURE,
+    DEFAULT_MAX_TARGET_TEMPERATURE,
+    DEFAULT_STARTUP_GRACE,
+    DOMAIN,
+    get_control_mode,
+    get_max_target_temperature,
+)
 from .proxy import StationReference, TelePoolSourceEntity
 
 _LOGGER = logging.getLogger(__name__)
 _TARGET_KEYS = (ATTR_TEMPERATURE, ATTR_TARGET_TEMP_LOW, ATTR_TARGET_TEMP_HIGH)
-_POOL_MAX_TEMP_CELSIUS = POOL_MAX_TEMP_CELSIUS
 
 _SUPPORTED_FEATURES = (
     ClimateEntityFeature.TARGET_TEMPERATURE
@@ -86,6 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                     power_source=entry.options.get("power_source"),
                     power_registry_id=entry.options.get("power_registry_id"),
                     startup_grace=entry.options.get("startup_grace", DEFAULT_STARTUP_GRACE),
+                    max_target_temperature=get_max_target_temperature(entry.options),
                 )
             ]
         )
@@ -107,6 +114,7 @@ class TelePoolClimate(TelePoolSourceEntity, ClimateEntity):
         power_source: str | None = None,
         power_registry_id: str | None = None,
         startup_grace: int = DEFAULT_STARTUP_GRACE,
+        max_target_temperature: float = DEFAULT_MAX_TARGET_TEMPERATURE,
     ) -> None:
         """Initialize the stable logical thermostat."""
         super().__init__(station, source_entity_id, registry_id, CLIMATE_DOMAIN)
@@ -122,6 +130,7 @@ class TelePoolClimate(TelePoolSourceEntity, ClimateEntity):
         self._power_on_at: datetime | None = None
         self._source_recovered = False
         self._startup_grace = startup_grace
+        self._max_target_temperature = get_max_target_temperature({CONF_MAX_TARGET_TEMPERATURE: max_target_temperature})
         self._cancel_grace = None
         self._cache: dict[str, Any] | None = None
         self._cache_store: ClimateCache | None = None
@@ -501,7 +510,7 @@ class TelePoolClimate(TelePoolSourceEntity, ClimateEntity):
     def max_temp(self) -> float:
         """Apply the selected pool limit while retaining a lower source limit."""
         cap = TemperatureConverter.convert(
-            _POOL_MAX_TEMP_CELSIUS, UnitOfTemperature.CELSIUS, self.native_temperature_unit
+            self._max_target_temperature, UnitOfTemperature.CELSIUS, self.native_temperature_unit
         )
         value = self._temperature(ATTR_MAX_TEMP)
         return min(value, cap) if value is not None else cap

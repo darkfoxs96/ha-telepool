@@ -21,6 +21,7 @@ from custom_components.telepool.switch import async_setup_entry as setup_switch
 def coordinator(**changes):
     result = SimpleNamespace(
         station=SimpleNamespace(id="q3-test", name="Pool", firmware="3.3.0"),
+        entry=SimpleNamespace(options={}),
         native_controls=SimpleNamespace(
             station_id="q3-test",
             target_temperature=28.0,
@@ -35,6 +36,7 @@ def coordinator(**changes):
         native_available=True,
         native_held=False,
         native_pending_target=None,
+        native_pending_target_queued=False,
         native_pending_error=None,
         native_source_time="2026-11-05T12:00:00+00:00",
         async_set_native_temperature=AsyncMock(),
@@ -104,25 +106,49 @@ async def test_native_temperature_delegates_only_single_setpoint_and_never_confi
     subject.async_set_native_enabled.assert_not_called()
 
 
-async def test_native_temperature_caps_a_higher_form_range_at_38c():
+@pytest.mark.parametrize("limit", [35, 38, 40])
+async def test_native_temperature_caps_a_higher_form_range_at_configured_limit(limit):
     subject = coordinator()
+    subject.entry.options["max_target_temperature"] = limit
     subject.native_controls.max_temperature = 60
     climate = TelePoolNativeClimate(subject)
-    assert climate.max_temp == 38
-    await climate.async_set_temperature(temperature=38)
+    assert climate.max_temp == limit
+    await climate.async_set_temperature(temperature=limit)
     with pytest.raises(ServiceValidationError):
-        await climate.async_set_temperature(temperature=38.1)
-    subject.async_set_native_temperature.assert_awaited_once_with(38)
+        await climate.async_set_temperature(temperature=limit + 0.1)
+    subject.async_set_native_temperature.assert_awaited_once_with(limit)
     subject.native_controls.min_temperature = 50
     assert not climate.available
-    assert (climate.min_temp, climate.max_temp) == (38, 38)
+    assert (climate.min_temp, climate.max_temp) == (limit, limit)
     with pytest.raises(HomeAssistantError):
-        await climate.async_set_temperature(temperature=38)
+        await climate.async_set_temperature(temperature=limit)
     assert subject.async_set_native_temperature.await_count == 1
 
 
+async def test_native_raised_pool_limit_delegates_above_cached_form_without_optimistic_confirmation():
+    subject = coordinator(entry=SimpleNamespace(options={"max_target_temperature": 38}))
+    climate = TelePoolNativeClimate(subject)
+    assert climate.max_temp == 38
+    await climate.async_set_temperature(temperature=38)
+    subject.async_set_native_temperature.assert_awaited_once_with(38)
+    assert climate.native_target_temperature == 28
+    assert subject.native_pending_target is None
+
+
+async def test_native_held_raised_target_can_be_queued_above_cached_cloud_maximum():
+    subject = coordinator(
+        entry=SimpleNamespace(options={"max_target_temperature": 38}), native_available=False, native_held=True
+    )
+    climate = TelePoolNativeClimate(subject)
+    await climate.async_set_temperature(temperature=38)
+    subject.async_set_native_temperature.assert_awaited_once_with(38)
+    assert climate.native_target_temperature == 28
+
+
 async def test_native_held_temperature_exposes_pending_desired_and_delegates_queue_policy():
-    subject = coordinator(native_available=False, native_held=True, native_pending_target=29)
+    subject = coordinator(
+        native_available=False, native_held=True, native_pending_target=29, native_pending_target_queued=True
+    )
     climate = TelePoolNativeClimate(subject)
     switch = TelePoolNativeFuSwitch(subject)
     assert climate.available
@@ -140,6 +166,26 @@ async def test_native_held_temperature_exposes_pending_desired_and_delegates_que
     with pytest.raises(HomeAssistantError):
         await switch.async_turn_on()
     subject.async_set_native_enabled.assert_not_called()
+
+
+@pytest.mark.parametrize("queued", [False, True])
+async def test_held_display_only_uses_queued_intention_and_keeps_rejected_target_in_diagnostics(queued):
+    subject = coordinator(
+        entry=SimpleNamespace(options={"max_target_temperature": 38}),
+        native_available=False,
+        native_held=True,
+        native_pending_target=38,
+        native_pending_target_queued=queued,
+        native_pending_error=None if queued else "write_failed",
+    )
+    subject.native_controls.target_temperature = 35
+    climate = TelePoolNativeClimate(subject)
+    assert climate.available
+    assert climate.native_target_temperature == (38 if queued else 35)
+    attributes = climate.extra_state_attributes
+    assert attributes["pending_target"] == {"unit": "°C", "targets": {"temperature": 38}}
+    assert attributes["reported_target"] == {"unit": "°C", "targets": {"temperature": 35}}
+    assert attributes["pending_error"] == (None if queued else "write_failed")
 
 
 async def test_native_stale_offline_without_hold_rejects_temperature_and_switch_commands():
@@ -256,6 +302,7 @@ async def test_native_real_ha_climate_service_converts_fahrenheit_to_celsius_onc
     hass.config.units = US_CUSTOMARY_SYSTEM
     assert await async_setup_component(hass, "climate", {})
     subject = coordinator()
+    subject.entry.options["max_target_temperature"] = 38
     subject.native_controls.max_temperature = 60
     subject.native_controls.temperature_step = 0.5
     entity = TelePoolNativeClimate(subject)

@@ -17,6 +17,7 @@ from custom_components.telepool.client import (
     SettingsRejected,
     Station,
     TelePoolClient,
+    TemperatureRangeRejected,
     WriteOutcomeUnknown,
 )
 from custom_components.telepool.client.controls import parse_controls_form
@@ -90,6 +91,29 @@ def mutate(source, callback):
     return str(soup)
 
 
+def range_form(*, target="25.0", minimum="5", maximum="35", step="0.5", errors=(), message=None):
+    """Synthetic response and range wording, not a captured server error format."""
+
+    def bounds(soup):
+        field = soup.find(attrs={"name": "SetPointTemp"})
+        field["min"], field["max"], field["step"] = minimum, maximum, step
+
+    source = mutate(form_html(target=target), bounds)
+    messages = "".join(
+        f'<span class="field-validation-error" data-valmsg-for="{html.escape(name, quote=True)}">'
+        + html.escape(
+            message
+            if message is not None
+            else f"The field SetPointTemp must be between {minimum} and {maximum}."
+            if name == "SetPointTemp"
+            else "private provider detail"
+        )
+        + "</span>"
+        for name in errors
+    )
+    return source.replace("</form>", messages + "</form>")
+
+
 class NativeParserTests(unittest.TestCase):
     def test_complete_successful_form_preserves_order_and_repeated_aspnet_values(self):
         form = parse_controls_form(form_html(), STATION)
@@ -134,22 +158,47 @@ class NativeParserTests(unittest.TestCase):
             with self.subTest(source=source[:50]), self.assertRaises(ProtocolError):
                 parse_controls_form(source, STATION)
 
-    def test_disabled_readonly_and_missing_or_wider_ranges_do_not_enable_temperature(self):
-        for attribute, value in (("disabled", ""), ("readonly", ""), ("step", "any"), ("max", "38")):
+    def test_disabled_readonly_and_invalid_ranges_do_not_enable_temperature(self):
+        for attribute, value in (
+            ("disabled", ""),
+            ("readonly", ""),
+            ("min", "36"),
+            ("min", "-Infinity"),
+            ("max", "NaN"),
+            ("step", "any"),
+            ("step", "0"),
+            ("step", "-0.5"),
+        ):
 
             def change(soup):
                 soup.find(attrs={"name": "SetPointTemp"})[attribute] = value
 
-            controls = parse_controls_form(mutate(form_html(), change), STATION).controls
-            self.assertEqual(controls.target_temperature, 25)
-            self.assertFalse(controls.can_set_temperature)
+            with self.subTest(attribute=attribute, value=value):
+                controls = parse_controls_form(mutate(form_html(), change), STATION).controls
+                self.assertEqual(controls.target_temperature, 25)
+                self.assertFalse(controls.can_set_temperature)
 
-        def remove_bound(soup):
-            del soup.find(attrs={"name": "SetPointTemp"})["min"]
+        for attribute in ("min", "max", "step"):
 
-        controls = parse_controls_form(mutate(form_html(), remove_bound), STATION).controls
-        self.assertIsNone(controls.min_temperature)
-        self.assertFalse(controls.can_set_temperature)
+            def remove_bound(soup):
+                del soup.find(attrs={"name": "SetPointTemp"})[attribute]
+
+            with self.subTest(missing=attribute):
+                controls = parse_controls_form(mutate(form_html(), remove_bound), STATION).controls
+                self.assertFalse(controls.can_set_temperature)
+
+    def test_temperature_capability_uses_live_form_bounds_without_fixed_envelope(self):
+        for minimum, maximum, target in (("5", "40", "38"), ("0", "40", "0"), ("5", "5", "5")):
+
+            def change(soup):
+                field = soup.find(attrs={"name": "SetPointTemp"})
+                field["min"], field["max"] = minimum, maximum
+
+            with self.subTest(minimum=minimum, maximum=maximum, target=target):
+                controls = parse_controls_form(mutate(form_html(target=target), change), STATION).controls
+                self.assertEqual(controls.target_temperature, float(target))
+                self.assertEqual((controls.min_temperature, controls.max_temperature), (float(minimum), float(maximum)))
+                self.assertTrue(controls.can_set_temperature)
 
     def test_unknown_menu_choices_and_enabled_wifi_fail_closed(self):
         def unknown_menu(soup):
@@ -165,6 +214,11 @@ class NativeParserTests(unittest.TestCase):
 
         with self.assertRaises(ProtocolError):
             parse_controls_form(mutate(form_html(), enabled_wifi), STATION)
+
+    def test_temperature_rejection_metadata_rejects_invalid_numbers(self):
+        for bounds in ((5, 35, 0), (36, 35, 0.5), (True, 35, 0.5), (5, float("inf"), 0.5), (5, 35, float("nan"))):
+            with self.subTest(bounds=bounds), self.assertRaises(ValueError):
+                TemperatureRangeRejected(*bounds)
 
 
 class NativeClientTests(unittest.IsolatedAsyncioTestCase):
@@ -218,12 +272,262 @@ class NativeClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("SetPointTemp", "25.0"), post[2]["data"])
 
     async def test_invalid_temperature_never_reaches_a_control_post(self):
-        for requested in (True, float("nan"), float("inf"), 4.5, 35.5, 38, 27.15):
+        for requested in (True, float("nan"), float("inf"), 27.15):
             with self.subTest(requested=requested):
                 self.session.add("GET", PATH, Response(form_html()))
                 with self.assertRaises(ProtocolError):
                     await self.client.async_set_temperature(STATION, requested)
         self.assertEqual(self.posts(), [])
+
+    async def test_server_rejects_38_once_with_its_response_range(self):
+        for maximum in ("35", "36"):
+            with self.subTest(maximum=maximum):
+                session = Session()
+                session.login()
+                session.add("GET", PATH, Response(form_html()))
+                session.add("POST", PATH, Response(range_form(target="38", maximum=maximum, errors=("SetPointTemp",))))
+                client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+
+                with self.assertRaises(TemperatureRangeRejected) as raised:
+                    await client.async_set_temperature(STATION, 38)
+
+                rejection = raised.exception
+                self.assertEqual((rejection.minimum, rejection.maximum, rejection.step), (5, float(maximum), 0.5))
+                self.assertEqual(rejection.reason, "validation_error")
+                self.assertEqual(rejection.invalid_fields, ("SetPointTemp",))
+                self.assertNotIn("private provider detail", str(rejection))
+                self.assertFalse(hasattr(rejection, "target_temperature"))
+                posts = [data for method, url, data in session.calls if method == "POST" and urlsplit(url).path == PATH]
+                self.assertEqual(len(posts), 1)
+                self.assertIn(("SetPointTemp", "38"), posts[0]["data"])
+
+    async def test_initial_request_does_not_treat_html_maximum_as_server_rejection(self):
+        self.session.add("GET", PATH, Response(form_html()), Response(range_form(target="38")))
+        self.session.add("POST", PATH, Response(status=302, headers={"Location": "/"}))
+        result = await self.client.async_set_temperature(STATION, 38)
+        self.assertEqual(result.target_temperature, 38)
+        self.assertEqual(len(self.posts()), 1)
+
+    async def test_server_range_fallback_uses_rejection_bounds_and_grid_over_older_html(self):
+        self.session.add("GET", PATH, Response(form_html()), Response(form_html()), Response(form_html(target="35.8")))
+        self.session.add(
+            "POST",
+            PATH,
+            Response(range_form(target="38", maximum="36", step="0.7", errors=("SetPointTemp",))),
+            Response(status=302, headers={"Location": "/"}),
+        )
+        with self.assertRaises(TemperatureRangeRejected) as raised:
+            await self.client.async_set_temperature(STATION, 38)
+        self.assertEqual((raised.exception.maximum, raised.exception.step), (36, 0.7))
+
+        result = await self.client.async_set_temperature(STATION, 35.8, range_rejection=raised.exception)
+
+        self.assertEqual(result.target_temperature, 35.8)
+        self.assertEqual(len(self.posts()), 2)
+        self.assertIn(("SetPointTemp", "35.8"), self.posts()[1][2]["data"])
+
+    async def test_range_rejection_override_rejects_invalid_metadata_before_post(self):
+        for invalid in (SettingsRejected("validation_error"), TemperatureRangeRejected(5, 35, 0.5)):
+            if type(invalid) is TemperatureRangeRejected:
+                invalid.step = float("nan")
+            self.session.add("GET", PATH, Response(form_html()))
+            with self.subTest(error_type=type(invalid).__name__), self.assertRaises(ProtocolError):
+                await self.client.async_set_temperature(STATION, 35, range_rejection=invalid)
+        self.assertEqual(self.posts(), [])
+
+    async def test_only_explicit_matching_range_wording_supplies_range_metadata(self):
+        cases = (
+            ("The field SetPointTemp must be between 5 and 35.", True),
+            ("Значение должно быть в диапазоне от 5 до 35.", True),
+            ("Значение должно быть между 5,0 и 35,0.", True),
+            ("SetPointTemp cannot be changed while the controller is busy. private provider detail", False),
+            ("The field SetPointTemp must be between 5 and 36.", False),
+            ("The field SetPointTemp must be between 5 and 35.5.", False),
+            ("The field SetPointTemp must be between 5 and 35e0.", False),
+            ("The field SetPointTemp must be between 5 and 35 000.", False),
+            ("Значение не должно быть между 5 и 35.", False),
+            ("must be between 5 and 35; must be between 5 and 36", False),
+            ("The field SetPointTemp must be between 5 and 35." + "x" * 512, False),
+        )
+        for message, typed in cases:
+            with self.subTest(case=cases.index((message, typed))):
+                session = Session()
+                session.login()
+                session.add("GET", PATH, Response(form_html()))
+                session.add("POST", PATH, Response(range_form(target="38", errors=("SetPointTemp",), message=message)))
+                client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+                with self.assertRaises(SettingsRejected) as raised:
+                    await client.async_set_temperature(STATION, 38)
+                self.assertEqual(type(raised.exception) is TemperatureRangeRejected, typed)
+                self.assertNotIn("private provider detail", str(raised.exception))
+                self.assertEqual(
+                    sum(method == "POST" and urlsplit(url).path == PATH for method, url, _ in session.calls), 1
+                )
+
+    async def test_observed_short_russian_range_error_is_typed_for_200_and_400(self):
+        """Use the observed message shape with synthetic routing and future bounds."""
+        for status in (200, 400):
+            for maximum in (35, 36):
+                for message in (
+                    f"Только от 5 до {maximum}",
+                    f"ТОЛЬКО\u00a0ОТ  5\tДО\u00a0{maximum}.",
+                    f"Только от 5,0 до {maximum},0.",
+                ):
+                    with self.subTest(status=status, maximum=maximum, message=message):
+                        session = Session()
+                        session.login()
+                        session.add("GET", PATH, Response(form_html()))
+                        session.add(
+                            "POST",
+                            PATH,
+                            Response(
+                                range_form(
+                                    target="38", maximum=str(maximum), errors=("SetPointTemp",), message=message
+                                ),
+                                status=status,
+                            ),
+                        )
+                        client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+                        with self.assertRaises(TemperatureRangeRejected) as raised:
+                            await client.async_set_temperature(STATION, 38)
+                        self.assertIs(type(raised.exception), TemperatureRangeRejected)
+                        self.assertEqual(
+                            (raised.exception.minimum, raised.exception.maximum, raised.exception.step),
+                            (5, maximum, 0.5),
+                        )
+                        self.assertEqual(
+                            sum(method == "POST" and urlsplit(url).path == PATH for method, url, _ in session.calls),
+                            1,
+                        )
+
+    async def test_short_russian_range_requires_exact_message_bounds_and_only_target_error(self):
+        cases = (
+            ("от 5 до 35", ("SetPointTemp",)),
+            ("Не только от 5 до 35", ("SetPointTemp",)),
+            ("Не вводите от 5 до 35", ("SetPointTemp",)),
+            ("Укажите от 5 до 35", ("SetPointTemp",)),
+            ("Только от 5 до 35 после включения", ("SetPointTemp",)),
+            ("После включения только от 5 до 35", ("SetPointTemp",)),
+            ("Только от 5 до 36", ("SetPointTemp",)),
+            ("Только от 4 до 35", ("SetPointTemp",)),
+            ("Только от 35 до 5", ("SetPointTemp",)),
+            ("Только от 5 до 35 000", ("SetPointTemp",)),
+            ("Только от 5 до 35e0", ("SetPointTemp",)),
+            ("Только от 5 до 35", ("SetPointTemp", "SenMaxPh")),
+            ("Только от 5 до 35", ("SetPointTemp", "unknownField")),
+            ("Только от 5 до 35", ("SetPointTemp", "SetPointTemp")),
+        )
+        for message, errors in cases:
+            with self.subTest(message=message, errors=errors):
+                session = Session()
+                session.login()
+                session.add("GET", PATH, Response(form_html()))
+                session.add("POST", PATH, Response(range_form(target="38", errors=errors, message=message)))
+                client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+                with self.assertRaises(SettingsRejected) as raised:
+                    await client.async_set_temperature(STATION, 38)
+                self.assertIs(type(raised.exception), SettingsRejected)
+                self.assertEqual(
+                    sum(method == "POST" and urlsplit(url).path == PATH for method, url, _ in session.calls), 1
+                )
+
+    async def test_wider_live_form_allows_38_and_preserves_all_unrelated_fields(self):
+        def wider_form(target):
+            return mutate(
+                form_html(target=target), lambda soup: soup.find(attrs={"name": "SetPointTemp"}).attrs.update(max="40")
+            )
+
+        preflight = wider_form("37.5")
+        self.session.add("GET", PATH, Response(preflight), Response(wider_form("38")))
+        self.session.add("POST", PATH, Response(status=302, headers={"Location": "/"}))
+        controls = await self.client.async_set_temperature(STATION, 38)
+
+        self.assertEqual(controls.target_temperature, 38)
+        self.assertEqual(controls.max_temperature, 40)
+        [post] = self.posts()
+        pairs = post[2]["data"]
+        self.assertEqual([value for name, value in pairs if name == "SetPointTemp"], ["38"])
+        original = parse_controls_form(preflight, STATION).fields
+        self.assertEqual(
+            [(name, value) for name, value in pairs if name != "SetPointTemp"],
+            [(name, value) for name, value in original if name != "SetPointTemp"],
+        )
+
+    async def test_strict_fallback_rejects_38_before_post_without_changing_other_fields(self):
+        preflight = form_html()
+        original = parse_controls_form(preflight, STATION).fields
+        self.session.add("GET", PATH, Response(preflight))
+
+        with self.assertRaisesRegex(ProtocolError, "current form bounds and step"):
+            await self.client.async_set_temperature(STATION, 38, enforce_form_range=True)
+
+        self.assertEqual(self.posts(), [])
+        self.assertEqual(parse_controls_form(preflight, STATION).fields, original)
+        self.assertIn(("SenMaxPh", "9.99"), original)
+
+    async def test_only_trustworthy_target_range_errors_have_range_metadata(self):
+        responses = (
+            range_form(target="38", minimum="36", maximum="35", errors=("SetPointTemp",)),
+            range_form(target="38", maximum="NaN", errors=("SetPointTemp",)),
+            range_form(target="38", step="0", errors=("SetPointTemp",)),
+            range_form(target="38", errors=("SetPointTemp", "SenMaxPh")),
+            range_form(target="38", errors=("SetPointTemp", "unknownField")),
+            range_form(target="38", errors=("SenMaxPh",)),
+            range_form(target="38", maximum="40", errors=("SetPointTemp",)),
+            range_form(target="38", errors=("SetPointTemp",)).replace('name="Id"', 'name="missingId"'),
+            range_form(target="38", errors=("SetPointTemp",)).replace(
+                "</form>", '<input name="unknownCommand" type="hidden" value="private"></form>'
+            ),
+            range_form(target="38", errors=("SetPointTemp",)).replace(
+                f'action="{PATH}', 'action="https://attacker.invalid/Control'
+            ),
+            range_form(target="38", errors=("SetPointTemp",)).replace(
+                'name="SetPointTemp"', 'name="SetPointTemp" data-val-range-max="40"'
+            ),
+            range_form(target="38", errors=("SetPointTemp",)).replace(
+                'name="SetPointTemp"', 'name="SetPointTemp" data-val-range-min="NaN"'
+            ),
+            form_html().replace(
+                "</form>", '<div class="validation-summary-errors">SetPointTemp private provider detail</div></form>'
+            ),
+        )
+        for response in responses:
+            with self.subTest(response=responses.index(response)):
+                session = Session()
+                session.login()
+                session.add("GET", PATH, Response(form_html()))
+                session.add("POST", PATH, Response(response))
+                client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+                with self.assertRaises(SettingsRejected) as raised:
+                    await client.async_set_temperature(STATION, 38)
+                self.assertNotIsInstance(raised.exception, TemperatureRangeRejected)
+                self.assertNotIn("private provider detail", str(raised.exception))
+                self.assertEqual(
+                    sum(method == "POST" and urlsplit(url).path == PATH for method, url, _ in session.calls), 1
+                )
+
+    async def test_http400_requires_validated_range_but_403_never_supplies_fallback_metadata(self):
+        for status, expected_type in ((400, TemperatureRangeRejected), (403, SettingsRejected)):
+            with self.subTest(status=status):
+                session = Session()
+                session.login()
+                session.add("GET", PATH, Response(form_html()))
+                session.add("POST", PATH, Response(range_form(target="38", errors=("SetPointTemp",)), status=status))
+                client = TelePoolClient(session, "synthetic-login", "synthetic-password")
+                with self.assertRaises(expected_type) as raised:
+                    await client.async_set_temperature(STATION, 38)
+                self.assertIs(type(raised.exception), expected_type)
+                self.assertEqual(
+                    sum(method == "POST" and urlsplit(url).path == PATH for method, url, _ in session.calls), 1
+                )
+
+    async def test_menu_write_cannot_produce_temperature_fallback_metadata(self):
+        self.session.add("GET", PATH, Response(form_html(target="38")))
+        self.session.add("POST", PATH, Response(range_form(target="38", errors=("SetPointTemp",))))
+        with self.assertRaises(SettingsRejected) as raised:
+            await self.client.async_set_enabled(STATION, False)
+        self.assertNotIsInstance(raised.exception, TemperatureRangeRejected)
+        self.assertEqual(len(self.posts()), 1)
 
     async def test_already_equal_setting_does_not_send_post(self):
         self.session.add("GET", PATH, Response(form_html()))

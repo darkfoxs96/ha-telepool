@@ -51,15 +51,17 @@ New entries use **Q3 thermostat** and **Q3 FU menu control** by default. Selecti
 
 The integration provides pH, Rx/ORP in mV, Q3 water temperature when available, read-only chemical setpoints, controller mode codes, Wi-Fi information, freshness diagnostics, and a general station error flag. Mode codes describe Q3's operating modes; connection status describes telemetry availability. The general error flag does not identify the cause of a fault.
 
-**Q3 thermostat** changes the cloud temperature target. The current form supports **5–35 °C in 0.5 °C steps**. The integration also applies an overall **38 °C** target ceiling, while preserving a lower limit from Q3 or an external thermostat; it does not extend Q3's 35 °C range. Without Q3's temperature probe, current water temperature stays unknown, but an editable target can still be controlled. The native thermostat's Heat mode describes its temperature-setting function; there is no separate native HVAC off command or inferred heating activity.
+**Q3 thermostat** changes the cloud temperature target. **Maximum target temperature** defaults to **35 °C** and can be adjusted in the integration's options. A request within that limit is sent to TelePool even if the web form advertises a lower maximum. If TelePool rejects it and returns a valid permitted range, the integration makes one replacement request at the highest valid target within both that range and your configured limit. It reports the range and replacement target; the display changes only after TelePool confirms the saved value. There is no replacement after an unrelated validation error, connection failure, or unknown result. The observed web form advertises **5–35 °C in 0.5 °C steps**; server limits are read from the response rather than fixed by controller model. Without Q3's temperature probe, current water temperature stays unknown, but an editable target can still be controlled. The native thermostat's Heat mode describes its temperature-setting function; there is no separate native HVAC off command or inferred heating activity.
 
 **Q3 FU menu control** changes TelePool's `MenuEnableFu` setting for the filtration unit (FU). The switch displays this setting, and changes are reflected in TelePool's interface. Q3 remains powered and continues reporting telemetry. Use an external power relay to disconnect the station's electrical supply.
 
 **External controls** show an existing Home Assistant thermostat or relay and forward your commands to its standard `climate` or `switch` entity. Add that device through its own integration first. These controls work independently of the TelePool cloud. Source state changes do not send commands back to the source.
 
+For an external thermostat, the maximum target is the lower of **Maximum target temperature** and the source thermostat's maximum. This limit applies to the TelePool **Water** entity, including commands from exported ecosystems. It does not restrict direct control of the original thermostat through its own entity, app, or physical controls. Changing the limit does not automatically change an already reported target or clamp measured water temperatures.
+
 Temperature and power modes can be chosen independently. To return from external devices to native controls, select **Q3 thermostat** and **Q3 FU menu control** in TelePool's options. The external thermostat's temperature appears in **Water**; the separate **Q3 water temperature** sensor still belongs to Q3's own probe.
 
-Chemical settings, dosing, calibration, schedules, firmware updates, restart, backwash, and other service commands are not exposed. TelePool saves a full settings form even for a temperature change: invalid existing fields elsewhere in that form can block the request. The integration reports rejected field names and does not automatically correct unrelated settings or retry a rejected write. Review those fields in TelePool before trying a new command.
+Chemical settings, dosing, calibration, schedules, firmware updates, restart, backwash, and other service commands are not exposed. TelePool saves a full settings form even for a temperature change: invalid existing fields elsewhere in that form can block the request. The integration reports rejected field names. Those errors do not cause automatic retries or corrections to unrelated settings. Review the fields in TelePool before trying a new command.
 
 ## Options
 
@@ -70,6 +72,7 @@ Open **Settings → Devices & services → TelePool → Configure** for the stat
 | **Polling interval (seconds)** | **300**; 60–3600 | Automatic cloud read interval. A shorter interval creates more requests. Confirmed external power OFF with cached readings pauses polling. |
 | **Data freshness limit (seconds)** | **900**; 120–7200 | Maximum age of a fresh chart point. Cloud errors and server stale flags also affect availability. This setting does not change the polling interval. |
 | **Startup grace period (seconds)** | **180**; 0–900 | Time to wait for fresh data after the external relay turns on. Last readings may remain visible during this period. It also applies to an external thermostat when shared power is enabled. |
+| **Maximum target temperature** | **35 °C**; 5–40 °C in 0.5 °C steps | Upper target limit for the TelePool thermostat. External thermostats retain any lower source limit. For Q3, a server rejection with valid range information can trigger one replacement request within that range and this limit. |
 | **Pool temperature control** | **Q3 thermostat**; Disabled / External pool thermostat | Choose Q3's own target, a separate thermostat, or no temperature control. |
 | **External pool thermostat** | Empty | Required only with External pool thermostat mode. Select the existing thermostat to display and control through TelePool. Ignored in other modes. |
 | **FU menu / power control** | **Q3 FU menu control**; Disabled / External station power relay | Choose the Q3 menu setting, a relay that actually cuts power to Q3, or no switch control. These modes have different physical meanings. |
@@ -97,6 +100,8 @@ With a **native Q3 thermostat and an external Q3 power relay**, a new target can
 For an **external thermostat**, this behavior requires **External relay also powers the thermostat** and both external sources. Its last temperature/target remain available during OFF; delivery waits for a new report from that thermostat after ON. Leave the option off if the thermostat has independent power. Native Q3 temperature control does not need this option.
 
 Only temperature targets are queued; FU on/off and thermostat mode commands are not. An ordinary outage with power on or unknown does not enable offline queuing. A Q3 command whose result is unknown is not automatically repeated: check the reported value before making another explicit request.
+
+Queued targets are checked against the current limit again before delivery. If you lower the limit below a queued target, that target remains blocked until corrected; it is not silently sent or reduced.
 
 ### Polling and timestamps
 

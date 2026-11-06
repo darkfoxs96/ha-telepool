@@ -94,8 +94,6 @@ _KNOWN_FORM_FIELDS = (
         )
     )
 )
-_NATIVE_MIN = Decimal("5")
-_NATIVE_MAX = Decimal("35")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -202,11 +200,66 @@ def validation_error_fields(html: str) -> tuple[str, ...]:
     return tuple(sorted(names))[:8]
 
 
-def parse_controls_form(html: str, station: Station) -> _Q3Form:
-    """Read the exact form and reject incomplete/ambiguous binding context."""
+def has_only_temperature_field_error(html: str) -> bool:
+    """Require explicit field errors; summary text alone cannot identify a range."""
+    soup = BeautifulSoup(html, "html.parser")
+    errors = soup.select(".field-validation-error, .input-validation-error")
+    return bool(errors) and all(node.get("data-valmsg-for", node.get("name")) == "SetPointTemp" for node in errors)
+
+
+def has_temperature_range_reason(html: str) -> bool:
+    """Recognize narrow range wording; never return provider message text.
+
+    These supported English/Russian patterns are conservative recognizers,
+    not a claim that every TelePool deployment uses the same validation text.
+    """
     soup = BeautifulSoup(html, "html.parser")
     forms = soup.find_all("form", id="forModalForm")
-    if len(forms) != 1 or has_form_errors(html):
+    if len(forms) != 1:
+        return False
+    form = forms[0]
+    fields = form.find_all("input", attrs={"name": "SetPointTemp"})
+    if len(fields) != 1:
+        return False
+    minimum, maximum = (_decimal(fields[0].get(name)) for name in ("min", "max"))
+    if minimum is None or maximum is None:
+        return False
+    messages = [
+        node.get_text(" ", strip=True)
+        for node in form.select('.field-validation-error[data-valmsg-for="SetPointTemp"]')
+    ]
+    if len(messages) != 1 or not messages[0] or len(messages[0]) > 512:
+        return False
+    message = " ".join(messages[0].split())
+    if re.search(r"\b(?:not|cannot|не)\b", message, re.IGNORECASE):
+        return False
+    number = r"([+-]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+))"
+    endings = r"(?!\w|[.,][0-9]|\s+[0-9])"
+    patterns = (
+        rf"\bmust be between\s+{number}\s+and\s+{number}{endings}",
+        rf"\bв диапазоне от\s+{number}\s+до\s+{number}{endings}",
+        rf"\bмежду\s+{number}\s+и\s+{number}{endings}",
+    )
+    matches = [match for pattern in patterns for match in re.finditer(pattern, message, re.IGNORECASE)]
+    # The observed TelePool response uses this complete short Russian message.
+    # Do not recognize a bare range or attach business clauses to this format.
+    if short_range := re.fullmatch(rf"только от\s+{number}\s+до\s+{number}\.?", message, re.IGNORECASE):
+        matches.append(short_range)
+    if len(matches) != 1:
+        return False
+    bounds = tuple(_decimal(part.replace(",", ".")) for part in matches[0].groups())
+    return bounds == (minimum, maximum)
+
+
+def parse_controls_form(html: str, station: Station, *, allow_validation_errors: bool = False) -> _Q3Form:
+    """Read the exact form and reject incomplete/ambiguous binding context.
+
+    The validation-error override is only for inspecting rejection metadata,
+    never for constructing another submission from the rejected response.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    forms = soup.find_all("form", id="forModalForm")
+    if len(forms) != 1 or (not allow_validation_errors and has_form_errors(html)):
         raise ProtocolError("TelePool did not provide a valid settings form")
     form = forms[0]
     if (
@@ -293,11 +346,16 @@ def parse_controls_form(html: str, station: Station) -> _Q3Form:
     target_fields = by_name.get("SetPointTemp", ())
     target = minimum = maximum = step = None
     target_editable = False
+    range_metadata_consistent = False
     if len(target_fields) == 1:
         field = target_fields[0]
         if field.name == "input" and str(field.get("type", "")).lower() == "number":
             target = _decimal(field.get("value"))
             minimum, maximum, step = (_decimal(field.get(name)) for name in ("min", "max", "step"))
+            range_metadata_consistent = all(
+                not field.has_attr(attribute) or _decimal(field.get(attribute)) == bound
+                for attribute, bound in (("data-val-range-min", minimum), ("data-val-range-max", maximum))
+            )
             target_editable = (
                 not _disabled(field, form) and not field.has_attr("readonly") and counts["SetPointTemp"] == 1
             )
@@ -316,10 +374,11 @@ def parse_controls_form(html: str, station: Station) -> _Q3Form:
         minimum is not None
         and maximum is not None
         and step is not None
-        and _NATIVE_MIN <= minimum <= maximum <= _NATIVE_MAX
+        and minimum <= maximum
         and step > 0
+        and range_metadata_consistent
     )
-    valid_target = target is not None and _NATIVE_MIN <= target <= _NATIVE_MAX
+    valid_target = target is not None
     controls = Q3Controls(
         station_id=station.id,
         target_temperature=float(target) if valid_target else None,
@@ -335,8 +394,8 @@ def parse_controls_form(html: str, station: Station) -> _Q3Form:
     return _Q3Form(controls, action, pairs)
 
 
-def temperature_value(form: _Q3Form, requested: object) -> str:
-    """Validate fresh live bounds and step without rounding or applying proxy caps."""
+def temperature_value(form: _Q3Form, requested: object, *, enforce_range: bool = True) -> str:
+    """Validate writable numeric input and step, optionally enforcing live bounds."""
     controls = form.controls
     value = _decimal(requested)
     minimum, maximum, step = (
@@ -344,6 +403,11 @@ def temperature_value(form: _Q3Form, requested: object) -> str:
     )
     if not controls.can_set_temperature or value is None or minimum is None or maximum is None or step is None:
         raise ProtocolError("TelePool temperature setting is unavailable")
-    if not _NATIVE_MIN <= minimum <= value <= maximum <= _NATIVE_MAX or (value - minimum) % step:
+    if (
+        minimum > maximum
+        or step <= 0
+        or (enforce_range and not minimum <= value <= maximum)
+        or (value - minimum) % step
+    ):
         raise ProtocolError("TelePool temperature must match the current form bounds and step")
     return format(value, "f")

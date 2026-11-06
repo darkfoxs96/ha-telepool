@@ -100,6 +100,10 @@ class TelePoolCoordinator(DataUpdateCoordinator[Snapshot | None]):
         return self._native.pending_target
 
     @property
+    def native_pending_target_queued(self) -> bool:
+        return self._native.pending_target_queued
+
+    @property
     def native_pending_error(self):
         return self._native.pending_error
 

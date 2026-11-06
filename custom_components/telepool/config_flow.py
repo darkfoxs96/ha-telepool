@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from dataclasses import asdict, replace
 from typing import Any
@@ -28,12 +29,17 @@ from .client import (
     ConnectionError as TelePoolConnectionError,
 )
 from .const import (
+    CONF_MAX_TARGET_TEMPERATURE,
     CONTROL_MODES,
+    DEFAULT_MAX_TARGET_TEMPERATURE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_STALE_AFTER,
     DEFAULT_STARTUP_GRACE,
     DOMAIN,
+    MAX_MAX_TARGET_TEMPERATURE,
+    MIN_MAX_TARGET_TEMPERATURE,
     get_control_mode,
+    get_max_target_temperature,
 )
 from .credential_store import CredentialStoreError, async_encrypt_credentials
 
@@ -46,6 +52,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "climate_power_linked": False,
     "thermostat_mode": "native_q3",
     "power_mode": "native_q3",
+    CONF_MAX_TARGET_TEMPERATURE: DEFAULT_MAX_TARGET_TEMPERATURE,
 }
 _INTERVALS = {
     "poll_interval": (60, 3600),
@@ -261,6 +268,17 @@ class TelePoolOptionsFlow(config_entries.OptionsFlow):
                     "unit_of_measurement": "s",
                 }
             )
+        fields[vol.Required(CONF_MAX_TARGET_TEMPERATURE, default=suggested[CONF_MAX_TARGET_TEMPERATURE])] = (
+            selector.NumberSelector(
+                {
+                    "min": MIN_MAX_TARGET_TEMPERATURE,
+                    "max": MAX_MAX_TARGET_TEMPERATURE,
+                    "step": 0.5,
+                    "mode": selector.NumberSelectorMode.BOX,
+                    "unit_of_measurement": "°C",
+                }
+            )
+        )
         for key, (domain, _, mode_key) in _SOURCES.items():
             fields[vol.Required(mode_key, default=suggested[mode_key])] = selector.SelectSelector(
                 {
@@ -286,6 +304,7 @@ class TelePoolOptionsFlow(config_entries.OptionsFlow):
         registry = er.async_get(self.hass)
         saved_options = dict(self.config_entry.options)
         suggested = DEFAULT_OPTIONS | saved_options
+        suggested[CONF_MAX_TARGET_TEMPERATURE] = get_max_target_temperature(saved_options)
         for kind in ("thermostat", "power"):
             suggested[f"{kind}_mode"] = get_control_mode(saved_options, kind)
         for key, (_, registry_key, mode_key) in _SOURCES.items():
@@ -313,6 +332,20 @@ class TelePoolOptionsFlow(config_entries.OptionsFlow):
                     options[key] = value
                 except ValueError, TypeError, OverflowError:
                     errors[key] = "invalid_interval"
+            try:
+                raw = user_input.get(CONF_MAX_TARGET_TEMPERATURE, suggested[CONF_MAX_TARGET_TEMPERATURE])
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                    raise ValueError
+                value = float(raw)
+                if (
+                    not math.isfinite(value)
+                    or not MIN_MAX_TARGET_TEMPERATURE <= value <= MAX_MAX_TARGET_TEMPERATURE
+                    or not (value * 2).is_integer()
+                ):
+                    raise ValueError
+                options[CONF_MAX_TARGET_TEMPERATURE] = value
+            except ValueError, TypeError, OverflowError:
+                errors[CONF_MAX_TARGET_TEMPERATURE] = "invalid_temperature_limit"
             aliases = user_input.get("export_aliases", False)
             if not isinstance(aliases, bool):
                 errors["export_aliases"] = "invalid_option"

@@ -251,7 +251,7 @@ async def test_climate_delegates_explicit_on_off_without_a_regulator(hass):
         (UnitOfTemperature.KELVIN, 278.15, 333.15, 311.15, 311.25),
     ],
 )
-async def test_pool_maximum_38c_validates_native_targets_before_forwarding(
+async def test_configured_pool_maximum_validates_native_targets_before_forwarding(
     hass, unit, minimum, source_max, cap, above_cap
 ):
     hass.states.async_set(
@@ -265,7 +265,9 @@ async def test_pool_maximum_38c_validates_native_targets_before_forwarding(
             "supported_features": int(ClimateEntityFeature.TARGET_TEMPERATURE),
         },
     )
-    climate = await attach(hass, TelePoolClimate(STATION, "climate.external"), "climate.pool")
+    climate = await attach(
+        hass, TelePoolClimate(STATION, "climate.external", max_target_temperature=38), "climate.pool"
+    )
     service = AsyncMock()
     hass.services.async_register("climate", "set_temperature", service)
 
@@ -302,6 +304,42 @@ async def test_pool_cap_keeps_a_lower_source_limit_and_checks_both_range_bounds(
     service.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("limit", "source_max", "effective_max"), [(35, 50, 35), (38, 50, 38), (40, 50, 40), (38, 32, 32)]
+)
+async def test_external_configured_ceiling_preserves_lower_device_limit_and_actual_readings(
+    hass, limit, source_max, effective_max
+):
+    hass.states.async_set(
+        "climate.external",
+        "heat",
+        {
+            "temperature_unit": "°C",
+            "min_temp": 5,
+            "max_temp": source_max,
+            "temperature": 39,
+            "current_temperature": 41,
+            "hvac_modes": ["heat"],
+            "supported_features": int(ClimateEntityFeature.TARGET_TEMPERATURE),
+        },
+    )
+    climate = await attach(
+        hass, TelePoolClimate(STATION, "climate.external", max_target_temperature=limit), "climate.pool"
+    )
+    service = AsyncMock()
+    hass.services.async_register("climate", "set_temperature", service)
+    assert climate.max_temp == effective_max
+    # The cap governs new commands, never masks readings or changes the device.
+    assert climate.native_target_temperature == 39
+    assert climate.native_current_temperature == 41
+    service.assert_not_called()
+    with pytest.raises(ServiceValidationError):
+        await climate.async_set_temperature(temperature=effective_max + 0.5)
+    service.assert_not_called()
+    await climate.async_set_temperature(temperature=effective_max)
+    service.assert_awaited_once()
+
+
 async def test_source_minimum_above_pool_cap_is_unavailable_without_inverted_metadata(hass):
     hass.states.async_set(
         "climate.external",
@@ -318,7 +356,7 @@ async def test_source_minimum_above_pool_cap_is_unavailable_without_inverted_met
     service = AsyncMock()
     hass.services.async_register("climate", "set_temperature", service)
     assert not climate.available
-    assert (climate.min_temp, climate.max_temp) == (38, 38)
+    assert (climate.min_temp, climate.max_temp) == (35, 35)
     for target in (38, 50):
         with pytest.raises(ServiceValidationError, match="source thermostat range"):
             await climate.async_set_temperature(temperature=target)

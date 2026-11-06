@@ -8,6 +8,7 @@ from .exceptions import (
     ProtocolError,
     SettingsRejected,
     TelePoolError,
+    TemperatureRangeRejected,
     WriteOutcomeUnknown,
 )
 from .models import Q3Controls, Snapshot, Station
@@ -23,5 +24,6 @@ __all__ = [
     "Station",
     "TelePoolClient",
     "TelePoolError",
+    "TemperatureRangeRejected",
     "WriteOutcomeUnknown",
 ]

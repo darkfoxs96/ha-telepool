@@ -35,13 +35,14 @@ ATTRIBUTES = {
 async def make_climate(hass):
     entities = []
 
-    async def make(*, registry_id=None, power_linked=True, attributes=None):
+    async def make(*, registry_id=None, power_linked=True, attributes=None, max_target_temperature=35):
         entity = TelePoolClimate(
             STATION,
             "climate.external",
             registry_id,
             power_linked=power_linked,
             power_source="switch.external",
+            max_target_temperature=max_target_temperature,
         )
         entity.hass = hass
         entity.entity_id = "climate.pool"
@@ -300,11 +301,11 @@ async def test_range_queue_requires_complete_pair_and_never_saves_mode(hass, mak
     ("unit", "minimum", "maximum", "cap", "above_cap"),
     [("°C", 5, 60, 38, 38.1), ("°F", 41, 140, 100.4, 100.5), ("K", 278.15, 333.15, 311.15, 311.25)],
 )
-async def test_paused_target_respects_38c_cap_in_cached_native_units(
+async def test_paused_target_respects_configured_cap_in_cached_native_units(
     hass, make_climate, unit, minimum, maximum, cap, above_cap
 ):
     attributes = {**ATTRIBUTES, "temperature_unit": unit, "min_temp": minimum, "max_temp": maximum}
-    entity = await prime(hass, make_climate, attributes=attributes)
+    entity = await prime(hass, make_climate, attributes=attributes, max_target_temperature=38)
     await pause(hass)
 
     assert entity.max_temp == pytest.approx(cap)
@@ -347,10 +348,27 @@ async def test_invalid_legacy_pending_is_retained_with_error_and_never_forwarded
     assert restored.extra_state_attributes["pending_target"] == legacy["pending"]
     assert restored.extra_state_attributes["pending_error"] == "target_out_of_range"
     # An explicit replacement within the current limits clears the old intent.
-    await restored.async_set_temperature(temperature=min(source_max, 38))
+    await restored.async_set_temperature(temperature=min(source_max, 35))
     service.assert_awaited_once()
     assert restored.extra_state_attributes["pending_target"] is None
     assert restored.extra_state_attributes["pending_error"] is None
+
+
+async def test_lowered_limit_after_reload_blocks_previously_valid_pending_target(hass, make_climate):
+    attributes = {**ATTRIBUTES, "max_temp": 40}
+    first = await prime(hass, make_climate, attributes=attributes, max_target_temperature=40)
+    await pause(hass)
+    await first.async_set_temperature(temperature=38)
+    first._call_on_remove_callbacks()
+    restored = await make_climate(max_target_temperature=35)
+    service = AsyncMock()
+    hass.services.async_register("climate", "set_temperature", service)
+    await reconnect(hass, attributes)
+    service.assert_not_called()
+    assert restored.max_temp == 35
+    assert restored.extra_state_attributes["pending_error"] == "target_out_of_range"
+    assert restored.extra_state_attributes["pending_target"]["targets"] == {"temperature": 38}
+    assert restored.native_target_temperature == 27
 
 
 async def test_paused_range_validates_both_bounds_and_flush_rechecks_new_source_limits(hass, make_climate):
@@ -361,7 +379,7 @@ async def test_paused_range_validates_both_bounds_and_flush_rechecks_new_source_
         "target_temp_low": 26,
         "target_temp_high": 28,
     }
-    entity = await prime(hass, make_climate, attributes=attributes)
+    entity = await prime(hass, make_climate, attributes=attributes, max_target_temperature=38)
     await pause(hass)
     await entity.async_set_temperature(target_temp_low=5, target_temp_high=38)
     for low, high in ((5, 38.1), (4.9, 38)):
@@ -377,7 +395,7 @@ async def test_paused_range_validates_both_bounds_and_flush_rechecks_new_source_
 
 
 async def test_pending_is_not_flushed_when_reconnected_source_minimum_exceeds_pool_limit(hass, make_climate):
-    entity = await prime(hass, make_climate, attributes={**ATTRIBUTES, "max_temp": 60})
+    entity = await prime(hass, make_climate, attributes={**ATTRIBUTES, "max_temp": 60}, max_target_temperature=38)
     await pause(hass)
     await entity.async_set_temperature(temperature=38)
     service = AsyncMock()

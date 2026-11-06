@@ -21,6 +21,8 @@ from .controls import (
     _Q3Form,
     control_url,
     has_form_errors,
+    has_only_temperature_field_error,
+    has_temperature_range_reason,
     parse_controls_form,
     temperature_value,
     validation_error_fields,
@@ -31,6 +33,7 @@ from .exceptions import (
     ConnectionError,
     ProtocolError,
     SettingsRejected,
+    TemperatureRangeRejected,
     WriteOutcomeUnknown,
 )
 from .models import Q3Controls, Snapshot, Station
@@ -84,12 +87,48 @@ class TelePoolClient:
         return parse_controls_form(html, station)
 
     async def async_set_temperature(
-        self, station: Station, temperature: float, *, dispatch_guard: Callable[[], bool] | None = None
+        self,
+        station: Station,
+        temperature: float,
+        *,
+        enforce_form_range: bool = False,
+        range_rejection: TemperatureRangeRejected | None = None,
+        dispatch_guard: Callable[[], bool] | None = None,
     ) -> Q3Controls:
-        """Change only the native target using fresh form bounds, with no POST retry."""
+        """Submit one target; callers validate their own integration safety limit.
+
+        Initial requests let the server decide its range. A caller may enforce
+        fresh form bounds independently. A definite range rejection supplies
+        the server's authoritative bounds/step for a deliberate fallback.
+        """
         async with self._control_lock:
             form = await self._get_controls_form(station)
-            value = temperature_value(form, temperature)
+            validation_form = form
+            if range_rejection is not None:
+                if type(range_rejection) is not TemperatureRangeRejected:
+                    raise ProtocolError("TelePool temperature rejection metadata is invalid")
+                try:
+                    if range_rejection.reason != "validation_error" or range_rejection.invalid_fields != (
+                        "SetPointTemp",
+                    ):
+                        raise ValueError
+                    bounds = TemperatureRangeRejected(
+                        range_rejection.minimum, range_rejection.maximum, range_rejection.step
+                    )
+                except AttributeError, ValueError:
+                    raise ProtocolError("TelePool temperature rejection metadata is invalid") from None
+                validation_form = replace(
+                    form,
+                    controls=replace(
+                        form.controls,
+                        min_temperature=bounds.minimum,
+                        max_temperature=bounds.maximum,
+                        temperature_step=bounds.step,
+                    ),
+                )
+            value = temperature_value(
+                validation_form, temperature, enforce_range=range_rejection is not None or enforce_form_range
+            )
             if form.controls.target_temperature == float(value):
                 return form.controls
             return await self._set_control(station, form, "SetPointTemp", value, dispatch_guard=dispatch_guard)
@@ -136,7 +175,9 @@ class TelePoolClient:
                 if not approved:
                     raise CommandNotSent("TelePool command was not sent because its dispatch conditions changed")
             # No await separates the final synchronous guard from dispatch.
-            await self._post_controls_once(station, form.action, fields)
+            await self._post_controls_once(
+                station, form.action, fields, temperature=value if name == "SetPointTemp" else None
+            )
         try:
             observed = (await self._get_controls_form(station)).controls
         except AuthenticationError, ConnectionError, ProtocolError:
@@ -150,7 +191,37 @@ class TelePoolClient:
             raise WriteOutcomeUnknown("TelePool settings may be queued; the requested value is not confirmed yet")
         return observed
 
-    async def _post_controls_once(self, station: Station, action: str, fields: tuple[tuple[str, str], ...]) -> None:
+    @staticmethod
+    def _validation_rejection(station: Station, html: str, temperature: str | None) -> SettingsRejected:
+        """Attach range metadata only to an explicit, trustworthy target rejection."""
+        invalid_fields = validation_error_fields(html)
+        generic = SettingsRejected("validation_error", invalid_fields=invalid_fields)
+        if (
+            temperature is None
+            or invalid_fields != ("SetPointTemp",)
+            or not has_only_temperature_field_error(html)
+            or not has_temperature_range_reason(html)
+        ):
+            return generic
+        try:
+            rejected = parse_controls_form(html, station, allow_validation_errors=True).controls
+            if not rejected.can_set_temperature:
+                return generic
+            minimum, maximum, step = rejected.min_temperature, rejected.max_temperature, rejected.temperature_step
+            if minimum is None or maximum is None or step is None or minimum <= float(temperature) <= maximum:
+                return generic
+            return TemperatureRangeRejected(minimum, maximum, step)
+        except ProtocolError, ValueError:
+            return generic
+
+    async def _post_controls_once(
+        self,
+        station: Station,
+        action: str,
+        fields: tuple[tuple[str, str], ...],
+        *,
+        temperature: str | None = None,
+    ) -> None:
         """One form POST, without redirect following, login recovery or replay."""
         try:
             async with self._session.request(
@@ -170,6 +241,10 @@ class TelePoolClient:
                             rejection_html = await response.text()
                             if len(rejection_html) <= _MAX_RESPONSE_LENGTH:
                                 invalid_fields = validation_error_fields(rejection_html)
+                                if response.status == 400 and has_form_errors(rejection_html):
+                                    rejection = self._validation_rejection(station, rejection_html, temperature)
+                                    if isinstance(rejection, TemperatureRangeRejected):
+                                        raise rejection
                         except aiohttp.ClientError, asyncio.TimeoutError, OSError, UnicodeDecodeError:
                             pass  # Rejection is known even if its body cannot be read.
                     raise SettingsRejected(f"http_{response.status}", invalid_fields=invalid_fields)
@@ -208,7 +283,7 @@ class TelePoolClient:
                         raise WriteOutcomeUnknown(
                             "TelePool returned an unclassified settings notice; do not resend automatically"
                         )
-                    raise SettingsRejected("validation_error", invalid_fields=invalid_fields)
+                    raise self._validation_rejection(station, html, temperature)
                 try:
                     parse_controls_form(html, station)
                 except ProtocolError:

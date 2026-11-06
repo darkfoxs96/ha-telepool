@@ -56,13 +56,19 @@ The client parses the exact `forModalForm`, validates its HTTPS action and stati
 
 Only one requested field is changed. `btnId` is forced to `Empty`; dosing, calibration, reset, Wi-Fi, schedule and service commands are not submitted as operations. Other successful settings remain unchanged, including values the server may consider invalid.
 
-`SetPointTemp` is editable only with a finite current value, valid numeric bounds and a positive step. The client additionally restricts native edits to the implemented **5–35 °C** envelope and requires alignment with the live form's step. This envelope is a client compatibility constraint, not a claim about every Q3 model. The integration's broader 38 °C pool cap cannot override a lower form/client limit.
+`SetPointTemp` is editable only with a finite current value, valid ordered numeric bounds and a positive step. The observed form advertises **5–35 °C in 0.5 °C steps**; this is not a model-specific hardcoded envelope or proof that the server rejects higher values. The integration enforces `max_target_temperature` (35 °C by default, configurable from 5 to 40 °C in 0.5 °C steps). An otherwise valid target within that user limit is submitted even when it exceeds the preflight form's advertised maximum.
 
 `MenuEnableFu` is read as a boolean only for recognized values and is writable only when the corresponding form control is editable. It represents the raw FU menu-control setting. It does not provide electrical-power feedback or a verified pump-running signal; `modeFu` is a separate reported mode.
 
 Writes are serialized. Each operation obtains a fresh form; an already-matching value requires no POST. An authentication-generation check and optional synchronous dispatch guard run under the authentication lock immediately before dispatch. A denied guard raises `CommandNotSent`, proving that no settings POST was sent.
 
-A dispatched settings POST is attempted once, without automatic redirect following, login recovery or replay. A subsequent form GET must show the requested value before the client returns success. This confirms server-side configuration only.
+A dispatched settings POST is attempted once, without automatic redirect following, login recovery or replay. A subsequent form GET must show the requested value before the client returns success. This confirms server-side configuration only. The narrow temperature-rejection correction below is a new command with a replacement value, not a replay of the rejected POST.
+
+A confirmed rejection of `SetPointTemp` can authorize exactly one replacement request only when a range-specific field error identifies both bounds and the response supplies valid numeric minimum, maximum and step information. The replacement is the greatest step-aligned target no higher than either the server maximum or the configured user limit, and must remain inside the returned range. No fixed per-model temperatures are substituted. A fresh form still supplies validated binding context and the unrelated settings to preserve; the validated rejection supplies the replacement's range and step even if that form's metadata is stale. The dispatch guard still applies, and read-back must confirm the replacement before it becomes the displayed target. Successful correction reports the permitted range and the value actually confirmed.
+
+The observed server rejects an unsupported temperature with the short Russian field error `Только от 5 до 35` ("Only from 5 to 35"). This complete message is recognized with dynamic numeric bounds that must match the validated response form; a bare range or a message with unrelated clauses does not authorize a replacement.
+
+There is no replacement for authentication or network failures, an unknown write outcome, generic validation errors, rejected unrelated fields, or missing/malformed range data. Failure of the replacement does not trigger another attempt.
 
 ## Rejections and unknown outcomes
 

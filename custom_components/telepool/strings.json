@@ -54,7 +54,8 @@
           "export_aliases": "Create temperature aliases for pH/Rx export",
           "climate_power_linked": "External relay also powers the thermostat",
           "thermostat_mode": "Pool temperature control",
-          "power_mode": "FU menu / power control"
+          "power_mode": "FU menu / power control",
+          "max_target_temperature": "Maximum target temperature"
         },
         "data_description": {
           "poll_interval": "How often to request telemetry from TelePool.",
@@ -65,7 +66,8 @@
           "export_aliases": "Optional read-only temperature representations of pH/Rx for systems that cannot display those measurements. They are not real temperatures.",
           "climate_power_linked": "Enable only with both external control modes selected, when the relay also powers the selected thermostat. Last temperature and target are retained during OFF; the latest new target is sent after reconnection. Q3 temperature control with an external relay does not need this option.",
           "thermostat_mode": "Choose Q3's own temperature setting, an external pool thermostat, or no temperature control. Leaving the external thermostat field empty does not select Q3 automatically.",
-          "power_mode": "Choose the Q3 FU menu setting, an external station power relay, or no control. The Q3 option changes a TelePool setting; its physical effect needs checking on the station. It does not disconnect station power or confirm that the pump is running."
+          "power_mode": "Choose the Q3 FU menu setting, an external station power relay, or no control. The Q3 option changes a TelePool setting; its physical effect needs checking on the station. It does not disconnect station power or confirm that the pump is running.",
+          "max_target_temperature": "Limits new targets through the TelePool Water entity. Defaults to 35 °C; choose 5–40 °C in 0.5 °C steps. External thermostats use the lower of this limit and their own maximum. If TelePool rejects a Q3 target and returns a valid range, one attempt is made at the permitted maximum within your limit. Direct control of the source thermostat is not restricted by this setting."
         }
       }
     },
@@ -75,7 +77,8 @@
       "invalid_source": "Select an existing entity of the correct type.",
       "telepool_source": "A TelePool entity cannot be used as a proxy source.",
       "power_link_requires_sources": "Select both external control modes and their devices to link their power.",
-      "external_source_required": "Select a device for the external control mode, or choose a different mode."
+      "external_source_required": "Select a device for the external control mode, or choose a different mode.",
+      "invalid_temperature_limit": "Enter a temperature from 5 to 40 °C in 0.5 °C steps."
     }
   },
   "entity": {
@@ -183,6 +186,11 @@
         "native_q3": "Q3 FU menu control",
         "external": "External station power relay"
       }
+    }
+  },
+  "exceptions": {
+    "q3_temperature_limited": {
+      "message": "TelePool rejected the requested temperature. Its current range is {min}–{max} °C; the target was set to {target} °C."
     }
   }
 }
