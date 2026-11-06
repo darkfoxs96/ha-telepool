@@ -1,48 +1,48 @@
-title: Тест TelePool
+title: TelePool Test
 views:
-  - title: Виртуальный бассейн
+  - title: Virtual pool
     path: pool
     icon: mdi:pool
     cards:
       - type: markdown
         content: |
-          # Виртуальный бассейн
-          Все устройства на этой панели — **Demo**. Они управляют только программными состояниями Home Assistant.
+          # Virtual pool
+          All devices on this dashboard are **Demo** devices. They only control simulated states in Home Assistant.
 
-          Температура воды задаётся ползунком вручную. Включите режим нагрева у термостата и установите цель выше текущей температуры — виртуальный нагреватель включится. Поднимите температуру воды выше цели — он выключится.
+          Set the water temperature manually with the slider. Select Heat on the thermostat and set a target above the current temperature to turn on the virtual heater. Raise the water temperature above the target to turn it off.
       - type: thermostat
         entity: climate.telepool_demo_thermostat
-        name: Тестовый термостат
+        name: Demo thermostat
         features:
           - type: climate-hvac-modes
             hvac_modes:
               - "off"
               - heat
       - type: entities
-        title: Виртуальное оборудование
+        title: Virtual equipment
         show_header_toggle: false
         entities:
           - entity: switch.telepool_demo_power
-            name: Питание установки (тест)
+            name: Demo station power
             icon: mdi:power
           - entity: input_number.telepool_demo_temperature
-            name: Температура воды
+            name: Water temperature
           - entity: switch.telepool_demo_heater
-            name: Виртуальный нагреватель
+            name: Virtual heater
             icon: mdi:radiator
       - type: markdown
         content: |
-          ## Подключение к TelePool
-          В параметрах интеграции выберите:
+          ## Connect to TelePool
+          In the integration options, select **External pool thermostat** for temperature control and **External station power relay** for FU / power control. Then choose:
 
-          - **Источник термостата:** `climate.telepool_demo_thermostat`
-          - **Внешнее реле питания:** `switch.telepool_demo_power`
+          - **External pool thermostat:** `climate.telepool_demo_thermostat`
+          - **External station power relay:** `switch.telepool_demo_power`
 
-          Для проверки паузы термостата включите опцию общего питания. Меняйте отложенную уставку через **термостат бассейна TelePool**, а не через Demo-источник на этой панели. После включения тестового питания Demo-термостат сообщит своё состояние через 3 секунды.
+          To test a shared-power pause, enable **External relay also powers the thermostat**. Change the queued target through the **TelePool Water thermostat**; the Demo source on this dashboard controls the simulated thermostat directly. After Demo power is turned on, the Demo thermostat reports its state after three seconds.
 
-          Выключатель здесь моделирует сигнал питания для TelePool. Он не обесточивает Q3 или какие-либо реальные устройства. Температура воды в симуляции меняется только ползунком.
+          The power switch simulates a power signal for TelePool and has no connection to Q3 or other physical devices. The simulation's water temperature changes only through the slider.
       - type: button
-        name: Открыть настройки TelePool
+        name: Open TelePool settings
         icon: mdi:cog
         icon_height: 24px
         tap_action:

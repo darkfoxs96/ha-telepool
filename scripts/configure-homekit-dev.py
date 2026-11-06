@@ -47,8 +47,8 @@ def main() -> None:
             "advertise_ip": [str(args.address)],
             "filter": {"include_entities": [sources[key] for key in ("climate", "power", "ph", "rx")]},
             "entity_config": {
-                sources["climate"]: {"name": "Вода", "type": "thermostat"},
-                sources["power"]: {"name": "Питание бассейна"},
+                sources["climate"]: {"name": "Water", "type": "thermostat"},
+                sources["power"]: {"name": "Pool power"},
                 sources["ph"]: {"name": "pH"},
                 sources["rx"]: {"name": "Rx ÷10"},
             },

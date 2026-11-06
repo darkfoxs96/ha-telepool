@@ -16,7 +16,7 @@ lovelace:
   dashboards:
     telepool-test:
       mode: yaml
-      title: Тест TelePool
+      title: TelePool Test
       icon: mdi:flask
       show_in_sidebar: true
       filename: telepool-test.yaml

@@ -45,7 +45,7 @@ docker compose exec -T homeassistant python -m homeassistant --script check_conf
 
 Open [localhost:8123](http://localhost:8123) and complete HA onboarding. The helper script copies [`dev/configuration.yaml`](../dev/configuration.yaml) and [`dev/telepool-test.yaml`](../dev/telepool-test.yaml) into ignored `dev/config/` only when the destination files do not exist. Existing local settings are not overwritten by subsequent starts. Keep credentials, HA storage, recordings and pairing state in that ignored directory rather than committing them.
 
-The dashboard at `/telepool-test/pool` contains:
+The **TelePool Test** developer dashboard at `/telepool-test/pool` uses English labels and instructions regardless of the Home Assistant UI language. Home Assistant still translates its built-in control labels according to the user's language. It contains:
 
 - `climate.telepool_demo_thermostat`: a Generic Thermostat controlling only the Demo heater.
 - `switch.telepool_demo_power`: a software power-state signal.
