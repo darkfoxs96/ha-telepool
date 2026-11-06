@@ -1,0 +1,14 @@
+name: ha-telepool-dev
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.0
+    restart: "no"
+    environment:
+      TZ: Europe/Moscow
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "${TELEPOOL_HOMEKIT_BIND_IP:-127.0.0.1}:21063:21063/tcp"
+    volumes:
+      - ./dev/config:/config
+      - ./custom_components/telepool:/config/custom_components/telepool:ro
+      - ./scripts:/opt/telepool-dev:ro

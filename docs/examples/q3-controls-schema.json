@@ -1,0 +1,939 @@
+{
+  "source": "GET /Control/Q3/Index/<STATION_SERIAL>",
+  "description": "Sanitized reference for Q3 web form fields. Field availability and limits may vary by account or firmware; this schema does not define the integration's supported controls.",
+  "fields": [
+    {
+      "name": "ClockGmt",
+      "label": "Часовой пояс",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "-12",
+      "max": "12",
+      "step": "1"
+    },
+    {
+      "name": "WiFiName",
+      "label": "Имя WiFi сети",
+      "type": "text",
+      "disabled_in_html": true,
+      "readonly": false
+    },
+    {
+      "name": "SysPassEnable",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SysPoolType",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Частный"
+        },
+        {
+          "value": "1",
+          "label": "Общественный"
+        }
+      ]
+    },
+    {
+      "name": "SysPoolTent",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Открытый"
+        },
+        {
+          "value": "1",
+          "label": "Закрытый"
+        }
+      ]
+    },
+    {
+      "name": "SysPoolVolume",
+      "label": "Обьем бассейна",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "5000",
+      "step": "1"
+    },
+    {
+      "name": "SysFlow",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Нормально разомкнутый"
+        },
+        {
+          "value": "2",
+          "label": "Нормально замкнутый"
+        }
+      ]
+    },
+    {
+      "name": "SysFlowWait",
+      "label": "Задержка \"Лепесток\"",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "1",
+      "max": "200",
+      "step": "1"
+    },
+    {
+      "name": "SysStp",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Нормально разомкнутый"
+        },
+        {
+          "value": "2",
+          "label": "Нормально замкнутый"
+        }
+      ]
+    },
+    {
+      "name": "SysStpWait",
+      "label": "Задержка \"Стоп\"",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "1",
+      "max": "200",
+      "step": "1"
+    },
+    {
+      "name": "SetPointPh",
+      "label": "Установка",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "6.0",
+      "max": "8.0",
+      "step": "0.1"
+    },
+    {
+      "name": "SetDeltaPh",
+      "label": "Гистерезис",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "0.2",
+      "max": "0.5",
+      "step": "0.1"
+    },
+    {
+      "name": "DosTypePh",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Интервальный"
+        },
+        {
+          "value": "1",
+          "label": "Пропорциональный"
+        }
+      ]
+    },
+    {
+      "name": "DosPriorityPh",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "DosModePh",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Ph-"
+        },
+        {
+          "value": "1",
+          "label": "Ph+"
+        }
+      ]
+    },
+    {
+      "name": "DosDayVolumePh",
+      "label": "Дозирование в сутки (мл/сут)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "50",
+      "max": "50000",
+      "step": "10"
+    },
+    {
+      "name": "DosVolumePh",
+      "label": "Обьем качка (мл)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "10000",
+      "step": "1"
+    },
+    {
+      "name": "DosWaitPh",
+      "label": "Время ожидания (мин)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "200",
+      "step": "1"
+    },
+    {
+      "name": "DosGainPh",
+      "label": "Коэффициент",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "500",
+      "step": "1"
+    },
+    {
+      "name": "DosEnablePh",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "DosProtectPh",
+      "label": "Защита от бездействия",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "0.1",
+      "max": "0.5",
+      "step": "0.1"
+    },
+    {
+      "name": "DosProtectWaitPh",
+      "label": "Период защиты (мин)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "10",
+      "max": "90",
+      "step": "10"
+    },
+    {
+      "name": "DosProtectEnablePh",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SenCorrectPh",
+      "label": "Корректировка",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "-1.0",
+      "max": "1.0",
+      "step": "0.1"
+    },
+    {
+      "name": "SenMinPh",
+      "label": "Критическое значение (min)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "5.0",
+      "max": "7.0",
+      "step": "0.1"
+    },
+    {
+      "name": "SenMaxPh",
+      "label": "Критическое значение (max)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "7.8",
+      "max": "9.0",
+      "step": "0.1"
+    },
+    {
+      "name": "SetPointRx",
+      "label": "Установка",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "200",
+      "max": "800",
+      "step": "5"
+    },
+    {
+      "name": "SetDeltaRx",
+      "label": "Гистерезис",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "10",
+      "max": "50",
+      "step": "10"
+    },
+    {
+      "name": "DosTypeRx",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Интервальный"
+        },
+        {
+          "value": "1",
+          "label": "Пропорциональный"
+        },
+        {
+          "value": "2",
+          "label": "Постоянный"
+        }
+      ]
+    },
+    {
+      "name": "DosDayVolumeRx",
+      "label": "Дозирование в сутки (мл/сут)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "50",
+      "max": "999990",
+      "step": "10"
+    },
+    {
+      "name": "DosVolumeRx",
+      "label": "Обьем качка (мл)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "10000",
+      "step": "1"
+    },
+    {
+      "name": "DosWaitRx",
+      "label": "Время ожидания (мин)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "200",
+      "step": "1"
+    },
+    {
+      "name": "DosGainRx",
+      "label": "Коэффициент",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "1",
+      "max": "500",
+      "step": "1"
+    },
+    {
+      "name": "DosEnableRx",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "DosProtectRx",
+      "label": "Защита от бездействия",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "50",
+      "max": "200",
+      "step": "10"
+    },
+    {
+      "name": "DosProtectWaitRx",
+      "label": "Период защиты (мин)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "10",
+      "max": "90",
+      "step": "10"
+    },
+    {
+      "name": "DosProtectEnableRx",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SenCorrectRx",
+      "label": "Корректировка",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "-100",
+      "max": "100",
+      "step": "5"
+    },
+    {
+      "name": "SenMinRx",
+      "label": "Критическое значение (min)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "200",
+      "max": "500",
+      "step": "10"
+    },
+    {
+      "name": "SenMaxRx",
+      "label": "Критическое значение (max)",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "700",
+      "max": "900",
+      "step": "10"
+    },
+    {
+      "name": "SetPointTemp",
+      "label": "Установка",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "5.0",
+      "max": "35.0",
+      "step": "0.5"
+    },
+    {
+      "name": "SetDeltaTemp",
+      "label": "Гистерезис",
+      "type": "number",
+      "disabled_in_html": false,
+      "readonly": false,
+      "min": "0.5",
+      "max": "2.0",
+      "step": "0.5"
+    },
+    {
+      "name": "MenuEnableFu",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SysPriorityTemp",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": false,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SysZozEnableTemp",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выключен"
+        },
+        {
+          "value": "1",
+          "label": "Включен"
+        }
+      ]
+    },
+    {
+      "name": "SysZozTemp",
+      "label": "Защита от заморозков",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "5.0",
+      "max": "10.0",
+      "step": "0.5"
+    },
+    {
+      "name": "SysDcTemp",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Включен"
+        },
+        {
+          "value": "1",
+          "label": "Только по току"
+        },
+        {
+          "value": "2",
+          "label": "Только по потоку"
+        },
+        {
+          "value": "3",
+          "label": "По току и потоку"
+        }
+      ]
+    },
+    {
+      "name": "SysTypeTemp",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Нагрев"
+        },
+        {
+          "value": "1",
+          "label": "Охлаждение"
+        }
+      ]
+    },
+    {
+      "name": "SenCorrectTemp",
+      "label": "Корректировка",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "0.0",
+      "max": "10.0",
+      "step": "1.0"
+    },
+    {
+      "name": "Hour0",
+      "label": "0",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour1",
+      "label": "1",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour2",
+      "label": "2",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour3",
+      "label": "3",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour4",
+      "label": "4",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour5",
+      "label": "5",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour6",
+      "label": "6",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour7",
+      "label": "7",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour8",
+      "label": "8",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour9",
+      "label": "9",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour10",
+      "label": "10",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour11",
+      "label": "11",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour12",
+      "label": "12",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour13",
+      "label": "13",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour14",
+      "label": "14",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour15",
+      "label": "15",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour16",
+      "label": "16",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour17",
+      "label": "17",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour18",
+      "label": "18",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour19",
+      "label": "19",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour20",
+      "label": "20",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour21",
+      "label": "21",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour22",
+      "label": "22",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "Hour23",
+      "label": "23",
+      "type": "checkbox",
+      "disabled_in_html": false,
+      "readonly": false
+    },
+    {
+      "name": "PumpPerfLeft",
+      "label": "Выработка (л/ч)",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "2.0",
+      "max": "30.0",
+      "step": "0.1"
+    },
+    {
+      "name": "PumpModeLeft",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выкл"
+        },
+        {
+          "value": "1",
+          "label": "Ph"
+        },
+        {
+          "value": "2",
+          "label": "Rx"
+        },
+        {
+          "value": "3",
+          "label": "ТД"
+        }
+      ]
+    },
+    {
+      "name": "PumpCanTypeLeft",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Разомкнутый"
+        },
+        {
+          "value": "1",
+          "label": "Замкнутый"
+        },
+        {
+          "value": "2",
+          "label": "Виртуальная"
+        }
+      ]
+    },
+    {
+      "name": "PumpCanWaitLeft",
+      "label": "Вход канистры",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "1",
+      "max": "500",
+      "step": "1"
+    },
+    {
+      "name": "PumpPerfRight",
+      "label": "Выработка (л/ч)",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "2.0",
+      "max": "30.0",
+      "step": "0.1"
+    },
+    {
+      "name": "PumpModeRight",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Выкл"
+        },
+        {
+          "value": "1",
+          "label": "Ph"
+        },
+        {
+          "value": "2",
+          "label": "Rx"
+        },
+        {
+          "value": "3",
+          "label": "ТД"
+        }
+      ]
+    },
+    {
+      "name": "PumpCanTypeRight",
+      "label": "",
+      "type": "select",
+      "disabled_in_html": true,
+      "readonly": false,
+      "options": [
+        {
+          "value": "0",
+          "label": "Разомкнутый"
+        },
+        {
+          "value": "1",
+          "label": "Замкнутый"
+        },
+        {
+          "value": "2",
+          "label": "Виртуальная"
+        }
+      ]
+    },
+    {
+      "name": "PumpCanWaitRight",
+      "label": "Вход канистры",
+      "type": "number",
+      "disabled_in_html": true,
+      "readonly": false,
+      "min": "1",
+      "max": "500",
+      "step": "1"
+    }
+  ]
+}

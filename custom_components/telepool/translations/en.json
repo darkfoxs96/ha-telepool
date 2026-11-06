@@ -1,0 +1,188 @@
+{
+  "title": "TelePool",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to TelePool",
+        "description": "Sign in to your TelePool account. Login details are encrypted with a separate local integration key. Device settings and dosing are not changed.",
+        "data": {
+          "username": "Login",
+          "password": "Password"
+        }
+      },
+      "station": {
+        "title": "Select a station",
+        "description": "Each station is added separately. You can add TelePool again for another station.",
+        "data": {
+          "station": "Station"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to TelePool",
+        "description": "Enter working credentials for the account that can access this station.",
+        "data": {
+          "username": "Login",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The login or password is incorrect, or interactive sign-in is required.",
+      "cannot_connect": "Cannot connect to TelePool. Try again later.",
+      "invalid_response": "TelePool returned an unsupported response.",
+      "encryption_error": "Cannot access the local encryption key. Restore the matching key from a backup before continuing.",
+      "invalid_station": "Select one of the discovered stations.",
+      "station_not_found": "This account does not have access to the configured station."
+    },
+    "abort": {
+      "already_configured": "This station is already configured.",
+      "no_stations": "No supported stations were found in this account.",
+      "reauth_successful": "TelePool access has been updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TelePool options",
+        "description": "TelePool reads Q3 data from the cloud. Choose Q3's own controls, an external device already added to Home Assistant, or no control. Calibration, dosing, and service commands are not exposed.",
+        "data": {
+          "poll_interval": "Polling interval (seconds)",
+          "stale_after": "Data freshness limit (seconds)",
+          "startup_grace": "Startup grace period (seconds)",
+          "climate_source": "External pool thermostat",
+          "power_source": "External station power relay",
+          "export_aliases": "Create temperature aliases for pH/Rx export",
+          "climate_power_linked": "External relay also powers the thermostat",
+          "thermostat_mode": "Pool temperature control",
+          "power_mode": "FU menu / power control"
+        },
+        "data_description": {
+          "poll_interval": "How often to request telemetry from TelePool.",
+          "stale_after": "Age after which a measurement is no longer fresh.",
+          "startup_grace": "Time to wait for fresh measurements after the external power relay is turned on.",
+          "climate_source": "Required only when external thermostat control is selected above. First add the thermostat to Home Assistant through its own integration. TelePool then shows its state and forwards your thermostat commands to it. Leave empty in other modes.",
+          "power_source": "Required only when external relay control is selected above. First add the relay to Home Assistant through its own integration. It must actually cut power to Q3. TelePool shows its state and forwards your power commands; OFF keeps the last Q3 readings. Leave empty in other modes.",
+          "export_aliases": "Optional read-only temperature representations of pH/Rx for systems that cannot display those measurements. They are not real temperatures.",
+          "climate_power_linked": "Enable only with both external control modes selected, when the relay also powers the selected thermostat. Last temperature and target are retained during OFF; the latest new target is sent after reconnection. Q3 temperature control with an external relay does not need this option.",
+          "thermostat_mode": "Choose Q3's own temperature setting, an external pool thermostat, or no temperature control. Leaving the external thermostat field empty does not select Q3 automatically.",
+          "power_mode": "Choose the Q3 FU menu setting, an external station power relay, or no control. The Q3 option changes a TelePool setting; its physical effect needs checking on the station. It does not disconnect station power or confirm that the pump is running."
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Enter a whole number within the displayed limits.",
+      "invalid_option": "Select a valid option.",
+      "invalid_source": "Select an existing entity of the correct type.",
+      "telepool_source": "A TelePool entity cannot be used as a proxy source.",
+      "power_link_requires_sources": "Select both external control modes and their devices to link their power.",
+      "external_source_required": "Select a device for the external control mode, or choose a different mode."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ph": {
+        "name": "pH"
+      },
+      "rx": {
+        "name": "Rx / ORP"
+      },
+      "temperature": {
+        "name": "Q3 water temperature"
+      },
+      "ph_measurement": {
+        "name": "pH — statistics"
+      },
+      "rx_measurement": {
+        "name": "Rx / ORP — statistics"
+      },
+      "temperature_measurement": {
+        "name": "Q3 water temperature — statistics"
+      },
+      "set_ph": {
+        "name": "pH target"
+      },
+      "set_rx": {
+        "name": "Rx target"
+      },
+      "mode_ph": {
+        "name": "pH mode"
+      },
+      "mode_rx": {
+        "name": "Rx mode"
+      },
+      "mode_fu": {
+        "name": "Filtration mode"
+      },
+      "mode_temperature": {
+        "name": "Temperature mode"
+      },
+      "rssi": {
+        "name": "Wi-Fi signal"
+      },
+      "quality": {
+        "name": "Wi-Fi quality"
+      },
+      "operating_status": {
+        "name": "Station connection",
+        "state": {
+          "working": "Connected",
+          "paused": "Paused",
+          "starting": "Starting",
+          "no_connection": "No connection"
+        }
+      },
+      "data_timestamp": {
+        "name": "Measurement time"
+      },
+      "received_timestamp": {
+        "name": "Cloud timestamp"
+      },
+      "ph_export": {
+        "name": "pH export alias"
+      },
+      "rx_export": {
+        "name": "Rx export alias"
+      },
+      "last_poll_timestamp": {
+        "name": "Last TelePool poll"
+      }
+    },
+    "binary_sensor": {
+      "data_fresh": {
+        "name": "Fresh data"
+      },
+      "station_error": {
+        "name": "Station error"
+      }
+    },
+    "climate": {
+      "climate": {
+        "name": "Water"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Station power"
+      },
+      "native_fu_menu": {
+        "name": "Q3 FU menu control"
+      }
+    }
+  },
+  "selector": {
+    "thermostat_mode": {
+      "options": {
+        "disabled": "Disabled",
+        "native_q3": "Q3 thermostat",
+        "external": "External pool thermostat"
+      }
+    },
+    "power_mode": {
+      "options": {
+        "disabled": "Disabled",
+        "native_q3": "Q3 FU menu control",
+        "external": "External station power relay"
+      }
+    }
+  }
+}

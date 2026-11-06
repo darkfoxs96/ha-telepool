@@ -1,0 +1,6 @@
+{
+  "name": "TelePool Python",
+  "build": { "dockerfile": "Dockerfile" },
+  "containerEnv": { "UV_PROJECT_ENVIRONMENT": "/opt/telepool-venv" },
+  "postCreateCommand": "uv sync --frozen --group dev"
+}

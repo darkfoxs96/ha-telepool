@@ -1,0 +1,95 @@
+# Local TelePool development only. All entities prefixed Demo are simulations.
+homeassistant:
+  name: TelePool Dev
+  time_zone: Europe/Moscow
+  unit_system: metric
+  country: RU
+
+frontend:
+config:
+history:
+logbook:
+recorder:
+my:
+
+lovelace:
+  dashboards:
+    telepool-test:
+      mode: yaml
+      title: Тест TelePool
+      icon: mdi:flask
+      show_in_sidebar: true
+      filename: telepool-test.yaml
+
+input_boolean:
+  telepool_demo_power:
+    name: Demo station power
+  telepool_demo_heater:
+    name: Demo heater
+
+input_number:
+  telepool_demo_temperature:
+    name: Demo water temperature
+    initial: 27
+    min: 5
+    max: 40
+    step: 0.1
+    unit_of_measurement: "°C"
+
+template:
+  - sensor:
+      - name: TelePool Demo Temperature
+        unique_id: telepool_demo_temperature
+        state: "{{ states('input_number.telepool_demo_temperature') }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+  - switch:
+      - name: TelePool Demo Power
+        unique_id: telepool_demo_power
+        state: "{{ is_state('input_boolean.telepool_demo_power', 'on') }}"
+        turn_on:
+          action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.telepool_demo_power
+        turn_off:
+          action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.telepool_demo_power
+      - name: TelePool Demo Heater
+        unique_id: telepool_demo_heater
+        state: "{{ is_state('input_boolean.telepool_demo_heater', 'on') }}"
+        turn_on:
+          action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.telepool_demo_heater
+        turn_off:
+          action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.telepool_demo_heater
+
+climate:
+  - platform: generic_thermostat
+    name: TelePool Demo Thermostat
+    unique_id: telepool_demo_thermostat
+    heater: switch.telepool_demo_heater
+    target_sensor: sensor.telepool_demo_temperature
+    min_temp: 5
+    max_temp: 38
+    target_temp: 28
+    initial_hvac_mode: "off"
+
+automation:
+  - id: telepool_demo_report_after_power_on
+    alias: TelePool Demo — report after simulated power restoration
+    triggers:
+      - trigger: state
+        entity_id: switch.telepool_demo_power
+        from: "off"
+        to: "on"
+    actions:
+      - delay:
+          seconds: 3
+      - action: homeassistant.update_entity
+        target:
+          entity_id: climate.telepool_demo_thermostat
+    mode: restart

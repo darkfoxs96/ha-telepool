@@ -1,0 +1,50 @@
+title: Тест TelePool
+views:
+  - title: Виртуальный бассейн
+    path: pool
+    icon: mdi:pool
+    cards:
+      - type: markdown
+        content: |
+          # Виртуальный бассейн
+          Все устройства на этой панели — **Demo**. Они управляют только программными состояниями Home Assistant.
+
+          Температура воды задаётся ползунком вручную. Включите режим нагрева у термостата и установите цель выше текущей температуры — виртуальный нагреватель включится. Поднимите температуру воды выше цели — он выключится.
+      - type: thermostat
+        entity: climate.telepool_demo_thermostat
+        name: Тестовый термостат
+        features:
+          - type: climate-hvac-modes
+            hvac_modes:
+              - "off"
+              - heat
+      - type: entities
+        title: Виртуальное оборудование
+        show_header_toggle: false
+        entities:
+          - entity: switch.telepool_demo_power
+            name: Питание установки (тест)
+            icon: mdi:power
+          - entity: input_number.telepool_demo_temperature
+            name: Температура воды
+          - entity: switch.telepool_demo_heater
+            name: Виртуальный нагреватель
+            icon: mdi:radiator
+      - type: markdown
+        content: |
+          ## Подключение к TelePool
+          В параметрах интеграции выберите:
+
+          - **Источник термостата:** `climate.telepool_demo_thermostat`
+          - **Внешнее реле питания:** `switch.telepool_demo_power`
+
+          Для проверки паузы термостата включите опцию общего питания. Меняйте отложенную уставку через **термостат бассейна TelePool**, а не через Demo-источник на этой панели. После включения тестового питания Demo-термостат сообщит своё состояние через 3 секунды.
+
+          Выключатель здесь моделирует сигнал питания для TelePool. Он не обесточивает Q3 или какие-либо реальные устройства. Температура воды в симуляции меняется только ползунком.
+      - type: button
+        name: Открыть настройки TelePool
+        icon: mdi:cog
+        icon_height: 24px
+        tap_action:
+          action: navigate
+          navigation_path: /config/integrations/integration/telepool

@@ -1,0 +1,26 @@
+[project]
+name = "ha-telepool-dev"
+version = "0.1.0"
+description = "Local development environment for the TelePool custom integration"
+requires-python = ">=3.14.2"
+dependencies = ["homeassistant==2026.11.0", "beautifulsoup4==4.14.3", "cryptography==50.0.2"]
+
+[dependency-groups]
+dev = ["pytest-homeassistant", "aioresponses==0.7.9", "ruff==0.17.3"]
+
+[tool.uv.sources]
+pytest-homeassistant = { git = "https://github.com/home-assistant/core", tag = "2026.11.0", subdirectory = "packages/pytest-homeassistant" }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q -p pytest_homeassistant.bootstrap -p no:pytest_homeassistant"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

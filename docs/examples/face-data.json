@@ -1,0 +1,15 @@
+[
+  {
+    "num": 123456789012345,
+    "dateTime": "02.01.2026 10:11",
+    "level": 3,
+    "quality": 54,
+    "oldDateTime": false,
+    "pooltronic": null,
+    "module": null,
+    "q3": {
+      "error": true,
+      "screenType": 7
+    }
+  }
+]
