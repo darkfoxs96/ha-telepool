@@ -1,11 +1,12 @@
 {
   "domain": "telepool",
   "name": "TelePool",
-  "version": "0.1.0",
+  "categories": ["water.pools_spas"],
   "codeowners": ["@darkfoxs96"],
   "config_flow": true,
   "documentation": "https://github.com/darkfoxs96/ha-telepool",
-  "issue_tracker": "https://github.com/darkfoxs96/ha-telepool/issues",
   "iot_class": "cloud_polling",
-  "requirements": ["beautifulsoup4==4.14.3", "cryptography==50.0.2"]
+  "issue_tracker": "https://github.com/darkfoxs96/ha-telepool/issues",
+  "requirements": ["beautifulsoup4>=4.14.3"],
+  "version": "0.1.0"
 }
