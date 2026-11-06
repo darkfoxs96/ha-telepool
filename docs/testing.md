@@ -4,6 +4,8 @@ The development environment pins Home Assistant and its official pytest helpers 
 
 ## Automated checks
 
+GitHub Actions runs the test suite, Ruff linting and formatting checks on pushes and pull requests. Separate **HACS** and **hassfest** workflows validate the integration against the catalog and Home Assistant requirements without skipping checks. These two workflows also run daily and can be started manually from the repository's Actions tab. They use only the workflow's read-only GitHub token; no TelePool credentials are needed.
+
 From the repository root:
 
 ```sh
